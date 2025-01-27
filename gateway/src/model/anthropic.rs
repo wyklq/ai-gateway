@@ -19,7 +19,7 @@ use crate::types::gateway::CompletionModelUsage;
 use crate::types::gateway::{ChatCompletionContent, ChatCompletionMessage, ToolCall};
 use crate::types::message::{MessageType, PromptMessage};
 use crate::types::threads::{InnerMessage, Message};
-use crate::types::GatewayResult;
+use crate::GatewayResult;
 use clust::messages::{
     Content, ContentBlock, ImageContentBlock, ImageContentSource, Message as ClustMessage,
     MessageChunk, MessagesRequestBody, MessagesRequestBuilder, StopReason, StreamError,

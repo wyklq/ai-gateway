@@ -169,7 +169,7 @@ impl Display for BedrockMistralCompletionModel {
     }
 }
 
-#[derive(Serialize, Clone, Debug)]
+#[derive(Serialize, Deserialize, Clone, Debug)]
 #[serde(rename_all = "snake_case")]
 pub enum ModelCapability {
     Tools,
@@ -186,7 +186,7 @@ impl FromStr for ModelCapability {
     }
 }
 
-#[derive(Serialize, Clone, Debug)]
+#[derive(Serialize, Deserialize, Clone, Debug)]
 #[serde(rename_all = "snake_case")]
 pub enum ModelIOFormats {
     Text,
@@ -209,7 +209,7 @@ impl FromStr for ModelIOFormats {
     }
 }
 
-#[derive(Serialize, Clone, Debug)]
+#[derive(Serialize, Deserialize, Clone, Debug)]
 #[serde(rename_all = "snake_case")]
 pub enum ModelType {
     Completions,
@@ -229,7 +229,7 @@ impl FromStr for ModelType {
     }
 }
 
-#[derive(Serialize, Clone, Debug)]
+#[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct Limits {
     max_context_size: u32,
 }
@@ -242,13 +242,13 @@ impl Limits {
     }
 }
 
-#[derive(Serialize, Clone, Debug)]
+#[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct ImagePrice {
     pub by_type: Option<HashMap<String, HashMap<String, f64>>>,
     pub mp_price: Option<f64>,
 }
 
-#[derive(Serialize, Clone, Debug)]
+#[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct InferenceProvider {
     pub provider: InferenceModelProvider,
     pub model_name: String,
@@ -256,7 +256,7 @@ pub struct InferenceProvider {
     pub endpoint: Option<String>,
 }
 
-#[derive(Serialize, Clone, Debug)]
+#[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct LlmModelDefinition {
     pub model: String,
     pub model_provider: String,

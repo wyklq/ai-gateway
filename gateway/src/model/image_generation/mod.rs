@@ -16,7 +16,7 @@ use crate::types::engine::InputArgs;
 use crate::types::engine::{ImageGenerationEngineParams, ImageGenerationModelDefinition};
 use crate::types::gateway::{CostCalculator, CreateImageRequest, ImageGenerationModelUsage, Usage};
 use crate::types::image::ImagesResponse;
-use crate::types::GatewayResult;
+use crate::GatewayResult;
 
 use super::types::ModelEvent;
 use super::CredentialsIdent;

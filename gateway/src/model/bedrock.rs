@@ -20,7 +20,7 @@ use crate::types::message::{MessageType, PromptMessage};
 use crate::types::provider::BedrockProvider;
 use crate::types::threads::InnerMessage;
 use crate::types::threads::Message as LMessage;
-use crate::types::GatewayResult;
+use crate::GatewayResult;
 use async_trait::async_trait;
 use aws_sdk_bedrockruntime::operation::converse::builders::ConverseFluentBuilder;
 use aws_sdk_bedrockruntime::operation::converse_stream;

@@ -12,13 +12,13 @@ use crate::types::engine::OpenAiModelParams;
 use crate::types::engine::Prompt;
 use crate::types::gateway::ChatCompletionMessage;
 use crate::types::threads::Message;
-use crate::types::GatewayResult;
+use crate::GatewayResult;
 use async_openai::config::OpenAIConfig;
 use async_openai::Client;
 use serde_json::Value;
+use std::collections::HashMap;
 use tracing::Span;
 use tracing_futures::Instrument;
-use std::collections::HashMap;
 
 #[derive(Clone)]
 pub struct OpenAISpecModel {

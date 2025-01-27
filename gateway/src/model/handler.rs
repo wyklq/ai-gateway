@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use crate::{
     error::GatewayError,
     events::{JsonValue, RecordResult},
-    types::GatewayResult,
+    GatewayResult,
 };
 
 use super::{

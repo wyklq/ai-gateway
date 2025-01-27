@@ -17,7 +17,7 @@ pub trait Tool: Send + Sync + 'static {
         &self,
         input: HashMap<String, serde_json::Value>,
         tags: HashMap<String, String>,
-    ) -> crate::types::GatewayResult<serde_json::Value>;
+    ) -> crate::GatewayResult<serde_json::Value>;
     fn stop_at_call(&self) -> bool {
         false
     }
@@ -45,7 +45,7 @@ impl Tool for GatewayTool {
         &self,
         _inputs: HashMap<String, serde_json::Value>,
         _tags: HashMap<String, String>,
-    ) -> crate::types::GatewayResult<serde_json::Value> {
+    ) -> crate::GatewayResult<serde_json::Value> {
         panic!("Gateway tool should not be called directly");
     }
 

@@ -18,7 +18,7 @@ use crate::types::gateway::CompletionModelUsage;
 use crate::types::gateway::{ChatCompletionContent, ChatCompletionMessage, ToolCall};
 use crate::types::message::{MessageType, PromptMessage};
 use crate::types::threads::{InnerMessage, Message};
-use crate::types::GatewayResult;
+use crate::GatewayResult;
 use async_openai::config::OpenAIConfig;
 use async_openai::error::OpenAIError;
 use async_openai::types::{

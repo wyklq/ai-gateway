@@ -1,4 +1,4 @@
-use crate::{error::GatewayError, types::GatewayResult};
+use crate::{error::GatewayError, GatewayResult};
 
 use super::types::{
     CountTokensRequest, CountTokensResponse, GenerateContentRequest, GenerateContentResponse,

@@ -4,7 +4,7 @@ use crate::model::types::ModelEvent;
 use crate::types::credentials::ApiKeyCredentials;
 use crate::types::gateway::CreateImageRequest;
 use crate::types::image::ImagesResponse;
-use crate::types::GatewayResult;
+use crate::GatewayResult;
 use async_openai::config::OpenAIConfig;
 use async_openai::Client;
 use std::collections::HashMap;

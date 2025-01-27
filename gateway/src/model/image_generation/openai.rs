@@ -16,8 +16,8 @@ use crate::{
         credentials::ApiKeyCredentials,
         gateway::{CreateImageRequest, ImageQuality, ImageResponseFormat, ImageSize, ImageStyle},
         image::ImagesResponse,
-        GatewayResult,
     },
+    GatewayResult,
 };
 
 use super::ImageGenerationModelInstance;

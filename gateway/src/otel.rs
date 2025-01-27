@@ -4,7 +4,7 @@ use std::str::FromStr;
 use std::time::Duration;
 use std::{future::Ready, sync::Arc};
 
-use crate::types::GatewayResult;
+use crate::GatewayResult;
 use actix_web::{
     dev::{forward_ready, Service, ServiceRequest, ServiceResponse, Transform},
     http::header::HeaderMap,

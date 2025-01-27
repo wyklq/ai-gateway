@@ -25,7 +25,7 @@ use crate::types::gateway::{
 };
 use crate::types::message::{MessageType, PromptMessage};
 use crate::types::threads::{AudioFormat, InnerMessage, Message, MessageContentPartOptions};
-use crate::types::GatewayResult;
+use crate::GatewayResult;
 use futures::Stream;
 use futures::StreamExt;
 use serde_json::Value;

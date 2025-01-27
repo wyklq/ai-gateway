@@ -7,8 +7,9 @@ use crate::types::engine::{CompletionModelDefinition, InputArgs, ModelTools, Mod
 use crate::types::gateway::{
     ChatCompletionContent, ChatCompletionMessage, ContentType, CostCalculator, Usage,
 };
+use crate::types::threads;
 use crate::types::threads::{InnerMessage, Message, MessageContentPart};
-use crate::types::{threads, GatewayResult};
+use crate::GatewayResult;
 use anthropic::AnthropicModel;
 use async_trait::async_trait;
 use futures::future::join;
@@ -303,7 +304,7 @@ impl<Inner: ModelInstance> ModelInstance for TracedModel<Inner> {
         let (tx, mut rx) = channel::<Option<ModelEvent>>(outer_tx.max_capacity());
         // let json_value_tags = JsonValue(&serde_json::to_value(tags_1.clone())?).as_value();
         let span = info_span!(
-            target: "langdb::user_tracing::models", 
+            target: "langdb::user_tracing::models",
             SPAN_MODEL_CALL,
             input = &input_str,
             model = model_str,

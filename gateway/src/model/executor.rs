@@ -3,10 +3,8 @@ use std::{borrow::Cow, collections::HashMap};
 
 use crate::{
     error::GatewayError,
-    types::{
-        engine::{InputArgs, ParentCompletionOptions},
-        GatewayResult,
-    },
+    types::engine::{InputArgs, ParentCompletionOptions},
+    GatewayResult,
 };
 
 pub fn prepare_input_variables(

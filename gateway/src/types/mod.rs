@@ -9,8 +9,6 @@ pub mod message;
 pub mod provider;
 pub mod threads;
 
-pub type GatewayResult<T> = Result<T, crate::error::GatewayError>;
-
 #[derive(Clone, Debug)]
 pub struct GatewayTenant {
     pub name: String,
