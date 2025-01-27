@@ -1,0 +1,49 @@
+name: Lint & Test
+
+on:
+  pull_request:
+    branches: [main]
+  merge_group:
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+
+concurrency:
+  group: lint/${{ github.head_ref || github.run_id }}
+  cancel-in-progress: true
+
+jobs:
+  lint:
+    timeout-minutes: 60
+    runs-on:
+      ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      
+      - name: Install dependencies
+        run: |
+          sudo apt-get update && \
+          sudo apt-get install -y \
+          build-essential \
+          libssl-dev \
+          pkg-config \
+          libpq5 \
+          libpq-dev \
+          clang \
+          cmake
+      - name: Install minimal stable
+        uses: actions-rs/toolchain@v1
+        with:
+          profile: minimal
+          toolchain: stable
+          components: rustfmt,clippy
+
+      - uses: Swatinem/rust-cache@v2
+      - name: Clippy
+        run: |
+          cargo clippy -- -D warnings
+
+      - name: Format
+        run: |
+          cargo fmt -- --check
