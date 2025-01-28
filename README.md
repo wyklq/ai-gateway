@@ -119,3 +119,20 @@ RUST_LOG=info cargo run     # For standard logs
 
 ## License
 
+
+
+## Roadmap
+
+- [ ] Include License (Apache2)
+- [ ] clickhouse config + traces
+- [ ] Provide example docker-compose (simple / full (clickhouse + redis))
+- [ ] cost control
+- [ ] rate limiting (redis configuration)
+- [ ] cargo install / curl -sH install
+- [ ] CI/CD for ubuntu / mac silicon
+- [ ] postman 
+- [ ] Include Model selection config (All / Filter)
+- [ ] usage command (runs a query and prints model usage)
+- [ ] README has explanations each of them.
+- [ ] Docs (opensource section) / Mrunmay
+- [ ] 
