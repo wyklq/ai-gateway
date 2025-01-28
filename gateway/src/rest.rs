@@ -13,7 +13,7 @@ use langdb_core::handler::embedding::embeddings_handler;
 use langdb_core::handler::image::create_image;
 use langdb_core::handler::models::list_gateway_models;
 use langdb_core::handler::{AvailableModels, CallbackHandlerFn};
-use langdb_core::models::LlmModelDefinition;
+use langdb_core::models::ModelDefinition;
 use langdb_core::otel::{TraceMap, TraceServiceImpl, TraceServiceServer};
 use langdb_core::types::gateway::CostCalculator;
 use serde::{Deserialize, Serialize};
@@ -49,17 +49,16 @@ impl ApiServer {
         Self { config }
     }
 
-    pub async fn start(self) -> Result<impl Future<Output = Result<(), ServerError>>, ServerError> {
+    pub async fn start(
+        self,
+        models: Vec<ModelDefinition>,
+    ) -> Result<impl Future<Output = Result<(), ServerError>>, ServerError> {
         let trace_senders = Arc::new(TraceMap::new());
         let trace_senders_inner = Arc::clone(&trace_senders);
 
         let server = HttpServer::new(move || {
             let cors = Self::get_cors(CorsOptions::Permissive);
-            Self::create_app_entry(
-                cors,
-                trace_senders_inner.clone(),
-                self.config.models.clone(),
-            )
+            Self::create_app_entry(cors, trace_senders_inner.clone(), models.clone())
         })
         .bind((self.config.rest.host.as_str(), self.config.rest.port))?
         .run()
@@ -81,7 +80,7 @@ impl ApiServer {
     fn create_app_entry(
         cors: Cors,
         trace_senders: Arc<TraceMap>,
-        models: Vec<LlmModelDefinition>,
+        models: Vec<ModelDefinition>,
     ) -> App<
         impl ServiceFactory<
             ServiceRequest,

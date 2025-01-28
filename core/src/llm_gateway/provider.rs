@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
 use crate::{
-    models::LlmModelDefinition,
+    models::ModelDefinition,
     types::{
         credentials::Credentials,
         engine::{
@@ -19,12 +19,12 @@ pub struct Provider {}
 
 impl Provider {
     pub fn get_completion_engine_for_model(
-        model: &LlmModelDefinition,
+        model: &ModelDefinition,
         request: &ChatCompletionRequest,
         credentials: Option<Credentials>,
     ) -> Result<CompletionEngineParams, GatewayError> {
         match model.inference_provider.provider {
-            InferenceModelProvider::OpenAI | InferenceModelProvider::LangdbOpen(_) => {
+            InferenceModelProvider::OpenAI | InferenceModelProvider::Proxy(_) => {
                 let params = OpenAiModelParams {
                     model: Some(model.inference_provider.model_name.clone()),
                     frequency_penalty: request.frequency_penalty,
@@ -128,7 +128,7 @@ impl Provider {
     }
 
     pub fn get_image_engine_for_model(
-        model: &LlmModelDefinition,
+        model: &ModelDefinition,
         request: &CreateImageRequest,
         credentials: Option<&Credentials>,
     ) -> Result<ImageGenerationEngineParams, GatewayError> {
@@ -140,7 +140,7 @@ impl Provider {
                 }),
                 model_name: request.model.clone(),
             }),
-            InferenceModelProvider::LangdbOpen(_) => Ok(ImageGenerationEngineParams::LangdbOpen {
+            InferenceModelProvider::Proxy(_) => Ok(ImageGenerationEngineParams::LangdbOpen {
                 credentials: credentials.and_then(|cred| match cred {
                     Credentials::ApiKey(key) => Some(key.clone()),
                     _ => None,

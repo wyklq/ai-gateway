@@ -5,19 +5,19 @@ pub mod models;
 
 use crate::error::GatewayError;
 use crate::model::types::ModelEvent;
-use crate::models::LlmModelDefinition;
+use crate::models::ModelDefinition;
 use crate::types::engine::Model;
 use crate::GatewayApiError;
 use actix_web::HttpRequest;
 use std::collections::HashMap;
 
 #[derive(Debug)]
-pub struct AvailableModels(pub Vec<LlmModelDefinition>);
+pub struct AvailableModels(pub Vec<ModelDefinition>);
 
 pub fn find_model_by_full_name(
     model_name: &str,
     provided_models: &AvailableModels,
-) -> Result<LlmModelDefinition, GatewayApiError> {
+) -> Result<ModelDefinition, GatewayApiError> {
     let model_parts = model_name.split('/').collect::<Vec<&str>>();
 
     let llm_model = if model_parts.len() == 1 {

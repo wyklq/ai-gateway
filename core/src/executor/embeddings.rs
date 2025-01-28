@@ -4,7 +4,7 @@ use crate::embed_mod::Embed;
 use crate::embed_mod::OpenAIEmbed;
 use crate::error::GatewayError;
 use crate::model::types::ModelEvent;
-use crate::models::LlmModelDefinition;
+use crate::models::ModelDefinition;
 use crate::types::credentials::Credentials;
 use async_openai::types::EmbeddingInput;
 use tracing::Span;
@@ -21,7 +21,7 @@ use crate::handler::{CallbackHandlerFn, ModelEventWithDetails};
 pub async fn handle_embeddings_invoke(
     mut request: CreateEmbeddingRequest,
     callback_handler: &CallbackHandlerFn,
-    llm_model: &LlmModelDefinition,
+    llm_model: &ModelDefinition,
     key_credentials: Option<&Credentials>,
 ) -> Result<async_openai::types::CreateEmbeddingResponse, GatewayError> {
     let span = Span::current();

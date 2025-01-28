@@ -1,4 +1,3 @@
-use langdb_core::models::LlmModelDefinition;
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 
@@ -12,7 +11,6 @@ pub struct RestConfig {
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Config {
     pub rest: RestConfig,
-    pub models: Vec<LlmModelDefinition>,
 }
 
 impl Default for RestConfig {
@@ -29,7 +27,6 @@ impl Default for Config {
     fn default() -> Self {
         Self {
             rest: RestConfig::default(),
-            models: Vec::new(),
         }
     }
 }

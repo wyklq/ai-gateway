@@ -45,13 +45,13 @@ impl From<String> for BedrockProvider {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-#[serde(rename_all = "lowercase")]
+#[serde(rename_all = "lowercase", into = "String", from = "String")]
 pub enum InferenceModelProvider {
     OpenAI,
     Anthropic,
     Gemini,
     Bedrock,
-    LangdbOpen(String),
+    Proxy(String),
 }
 
 impl From<String> for InferenceModelProvider {
@@ -61,7 +61,18 @@ impl From<String> for InferenceModelProvider {
             "anthropic" => InferenceModelProvider::Anthropic,
             "gemini" => InferenceModelProvider::Gemini,
             "bedrock" => InferenceModelProvider::Bedrock,
-            other => InferenceModelProvider::LangdbOpen(other.to_string()),
+            other => InferenceModelProvider::Proxy(other.to_string()),
+        }
+    }
+}
+impl Into<String> for InferenceModelProvider {
+    fn into(self) -> String {
+        match self {
+            InferenceModelProvider::OpenAI => "openai".to_string(),
+            InferenceModelProvider::Anthropic => "anthropic".to_string(),
+            InferenceModelProvider::Gemini => "gemini".to_string(),
+            InferenceModelProvider::Bedrock => "bedrock".to_string(),
+            InferenceModelProvider::Proxy(other) => other,
         }
     }
 }
@@ -73,7 +84,7 @@ impl std::fmt::Display for InferenceModelProvider {
             InferenceModelProvider::Anthropic => write!(f, "anthropic"),
             InferenceModelProvider::Gemini => write!(f, "gemini"),
             InferenceModelProvider::Bedrock => write!(f, "bedrock"),
-            InferenceModelProvider::LangdbOpen(name) => write!(f, "{}", name),
+            InferenceModelProvider::Proxy(name) => write!(f, "{}", name),
         }
     }
 }

@@ -6,7 +6,7 @@ use crate::handler::ModelEventWithDetails;
 use crate::llm_gateway::provider::Provider;
 use crate::model::image_generation::initialize_image_generation;
 use crate::model::types::ModelEvent;
-use crate::models::LlmModelDefinition;
+use crate::models::ModelDefinition;
 use crate::types::engine::ImageGenerationModelDefinition;
 use crate::types::gateway::CreateImageRequest;
 use crate::types::image::ImagesResponse;
@@ -26,7 +26,7 @@ use tracing_futures::Instrument;
 pub async fn handle_image_generation(
     mut request: CreateImageRequest,
     callback_handler: &CallbackHandlerFn,
-    llm_model: &LlmModelDefinition,
+    llm_model: &ModelDefinition,
     key_credentials: Option<&Credentials>,
     cost_calculator: Arc<Box<dyn CostCalculator>>,
     tags: HashMap<String, String>,
@@ -37,7 +37,7 @@ pub async fn handle_image_generation(
     let engine = Provider::get_image_engine_for_model(llm_model, &request, key_credentials)?;
 
     let api_provider_name = match &llm_model.inference_provider.provider {
-        InferenceModelProvider::LangdbOpen(provider) => provider.clone(),
+        InferenceModelProvider::Proxy(provider) => provider.clone(),
         _ => engine.provider_name().to_string(),
     };
 

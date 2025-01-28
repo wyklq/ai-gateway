@@ -229,9 +229,19 @@ impl FromStr for ModelType {
     }
 }
 
+impl Display for ModelType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ModelType::Completions => write!(f, "completions"),
+            ModelType::Embeddings => write!(f, "embeddings"),
+            ModelType::ImageGeneration => write!(f, "image_generation"),
+        }
+    }
+}
+
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct Limits {
-    max_context_size: u32,
+    pub max_context_size: u32,
 }
 
 impl Limits {
@@ -257,7 +267,7 @@ pub struct InferenceProvider {
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
-pub struct LlmModelDefinition {
+pub struct ModelDefinition {
     pub model: String,
     pub model_provider: String,
     pub inference_provider: InferenceProvider,
