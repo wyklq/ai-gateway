@@ -33,8 +33,7 @@ pub fn pretty_print_models(models: Vec<ModelDefinition>) {
         } else {
             format!(
                 "{}\nvia: {}",
-                model.model_provider,
-                model.inference_provider.provider.to_string()
+                model.model_provider, model.inference_provider.provider
             )
         };
 

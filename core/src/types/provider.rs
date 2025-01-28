@@ -65,9 +65,9 @@ impl From<String> for InferenceModelProvider {
         }
     }
 }
-impl Into<String> for InferenceModelProvider {
-    fn into(self) -> String {
-        match self {
+impl From<InferenceModelProvider> for String {
+    fn from(val: InferenceModelProvider) -> Self {
+        match val {
             InferenceModelProvider::OpenAI => "openai".to_string(),
             InferenceModelProvider::Anthropic => "anthropic".to_string(),
             InferenceModelProvider::Gemini => "gemini".to_string(),

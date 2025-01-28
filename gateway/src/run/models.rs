@@ -49,5 +49,5 @@ pub fn get_models_path() -> Result<String, std::io::Error> {
             return std::fs::read_to_string(user_models);
         }
     }
-    return Ok(include_str!("../../../core/models.yaml").to_string());
+    Ok(include_str!("../../../core/models.yaml").to_string())
 }

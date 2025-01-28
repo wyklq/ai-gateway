@@ -300,6 +300,15 @@ impl TraceService for TraceServiceImpl {
                     let tenant_id = attributes
                         .remove("langdb.tenant")
                         .and_then(|v| Some(v.as_str()?.to_owned()));
+
+                    if tenant_id.is_none() {
+                        tracing::error!(
+                            "No tenant id found in span {} with attributes: {:#?}",
+                            span.name,
+                            attributes
+                        );
+                    }
+
                     let project_id = attributes
                         .remove("langdb.project_id")
                         .and_then(|v| Some(v.as_str()?.to_owned()));

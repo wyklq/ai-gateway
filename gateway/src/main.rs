@@ -3,8 +3,6 @@ use config::Config;
 use langdb_core::error::GatewayError;
 use rest::ApiServer;
 use run::models::load_models;
-use serde_json;
-use serde_yaml;
 use thiserror::Error;
 
 mod cli;

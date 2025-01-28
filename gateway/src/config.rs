@@ -8,7 +8,7 @@ pub struct RestConfig {
     pub cors_allowed_origins: Vec<String>,
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone, Default)]
 pub struct Config {
     pub rest: RestConfig,
 }
@@ -23,21 +23,10 @@ impl Default for RestConfig {
     }
 }
 
-impl Default for Config {
-    fn default() -> Self {
-        Self {
-            rest: RestConfig::default(),
-        }
-    }
-}
-
 impl Config {
     pub fn load<P: AsRef<Path>>(config_path: P) -> Self {
         match std::fs::File::open(config_path) {
-            Ok(f) => {
-                let a = serde_yaml::from_reader(f).unwrap();
-                a
-            }
+            Ok(f) => serde_yaml::from_reader(f).unwrap(),
             Err(_) => Self::default(),
         }
     }
