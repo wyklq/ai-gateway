@@ -3,4 +3,4 @@ bootstrap
 .vscode/launch.json
 .idea
 .env
-langdb-ai-gateway.config.yaml
+config.yaml

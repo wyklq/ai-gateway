@@ -1,14 +1,13 @@
 [package]
-name = "langdb-ai-gateway-server"
+name = "langdb_core"
 version = "0.1.0"
 edition = "2021"
 
-[[bin]]
-name = "langdb-ai-gateway-server"
-path = "src/main.rs"
+[lib]
+name = "langdb_core"
+path = "src/lib.rs"
 
 [dependencies]
-langdb-ai-gateway = { path = "../gateway" }
 tokio = { version = "1.37.0", features = ["sync"] }
 tokio-stream = { version = "0.1.15", features = ["io-util"] }
 tracing-futures = { version = "0.2", features = ["futures-03"] }
@@ -19,15 +18,24 @@ serde_json = "1.0"
 chrono = { version = "0.4.38", features = ["serde"] }
 async-trait = "0.1.82"
 thiserror = "1.0.59"
+async-openai = { git = "https://github.com/v3g42/async-openai.git" }
 futures = "0.3.30"
-actix-cors = "0.7.0"
 
 serde_with = { version = "3.8.1", features = ["json"] }
 validator = { version = "0.18", features = ["derive"] }
+clust = { git = "https://github.com/v3g42/clust.git" }
 indexmap = { version = "2.2.6", features = ["serde"] }
 serde_tuple = "0.5.0"
 minijinja = "2.0.1"
 base64 = "0.22.1"
+aws-smithy-types = { version = "1.2.0", features = [
+  "serde-deserialize",
+  "serde-serialize",
+] }
+aws-sdk-bedrock = "1.64.0"
+aws-sdk-bedrockruntime = "1.64.0"
+aws-smithy-runtime-api = "1.2.0"
+aws-config = { version = "1.1.7", features = ["behavior-version-latest"] }
 bytemuck = { version = "1.16", features = ["derive"] }
 reqwest-eventsource = "0.6.0"
 reqwest = { version = "0.12.2", default-features = false, features = [
@@ -49,14 +57,12 @@ tracing-subscriber = { version = "0.3.0", features = [
 ] }
 valuable = { version = "0.1", features = ["derive"] }
 opentelemetry = "0.24"
-opentelemetry-otlp = { version = "0.17", features = ["tls"] }
 opentelemetry_sdk = { version = "0.24.0", features = ["rt-tokio"] }
 opentelemetry-proto = { version = "0.7.0", features = [
   "gen-tonic",
   "trace",
   "with-serde",
 ] }
-serde_yaml = "0.9"
 
 [dependencies.openssl]
 version = "0.10"

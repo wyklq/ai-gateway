@@ -238,6 +238,50 @@ dependencies = [
 ]
 
 [[package]]
+name = "ai-gateway"
+version = "0.1.0"
+dependencies = [
+ "actix-cors",
+ "actix-web",
+ "async-trait",
+ "base64 0.22.1",
+ "bytemuck",
+ "bytes",
+ "chrono",
+ "dashmap",
+ "either",
+ "futures",
+ "indexmap 2.7.1",
+ "langdb_core",
+ "minijinja",
+ "openssl",
+ "opentelemetry",
+ "opentelemetry-otlp",
+ "opentelemetry-proto",
+ "opentelemetry_sdk",
+ "regex",
+ "reqwest",
+ "reqwest-eventsource",
+ "secrecy",
+ "serde",
+ "serde_json",
+ "serde_tuple",
+ "serde_with",
+ "serde_yaml",
+ "thiserror 1.0.69",
+ "tokio",
+ "tokio-stream",
+ "tonic",
+ "tracing",
+ "tracing-futures",
+ "tracing-opentelemetry",
+ "tracing-subscriber",
+ "uuid",
+ "validator",
+ "valuable",
+]
+
+[[package]]
 name = "alloc-no-stdlib"
 version = "2.0.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1901,7 +1945,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "langdb-ai-gateway"
+name = "langdb_core"
 version = "0.1.0"
 dependencies = [
  "actix-web",
@@ -1934,50 +1978,6 @@ dependencies = [
  "serde_json",
  "serde_tuple",
  "serde_with",
- "thiserror 1.0.69",
- "tokio",
- "tokio-stream",
- "tonic",
- "tracing",
- "tracing-futures",
- "tracing-opentelemetry",
- "tracing-subscriber",
- "uuid",
- "validator",
- "valuable",
-]
-
-[[package]]
-name = "langdb-ai-gateway-server"
-version = "0.1.0"
-dependencies = [
- "actix-cors",
- "actix-web",
- "async-trait",
- "base64 0.22.1",
- "bytemuck",
- "bytes",
- "chrono",
- "dashmap",
- "either",
- "futures",
- "indexmap 2.7.1",
- "langdb-ai-gateway",
- "minijinja",
- "openssl",
- "opentelemetry",
- "opentelemetry-otlp",
- "opentelemetry-proto",
- "opentelemetry_sdk",
- "regex",
- "reqwest",
- "reqwest-eventsource",
- "secrecy",
- "serde",
- "serde_json",
- "serde_tuple",
- "serde_with",
- "serde_yaml",
  "thiserror 1.0.69",
  "tokio",
  "tokio-stream",

@@ -1,4 +1,4 @@
-use langdb_ai_gateway::models::LlmModelDefinition;
+use langdb_core::models::LlmModelDefinition;
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 

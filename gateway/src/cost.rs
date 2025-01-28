@@ -1,4 +1,4 @@
-use langdb_ai_gateway::types::gateway::{
+use langdb_core::types::gateway::{
     CostCalculationResult, CostCalculator, CostCalculatorError, Usage,
 };
 

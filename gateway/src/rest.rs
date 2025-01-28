@@ -8,14 +8,14 @@ use actix_web::{
     App, HttpServer,
 };
 use futures::{future::try_join, Future, TryFutureExt};
-use langdb_ai_gateway::handler::chat::create_chat_completion;
-use langdb_ai_gateway::handler::embedding::embeddings_handler;
-use langdb_ai_gateway::handler::image::create_image;
-use langdb_ai_gateway::handler::models::list_gateway_models;
-use langdb_ai_gateway::handler::{AvailableModels, CallbackHandlerFn};
-use langdb_ai_gateway::models::LlmModelDefinition;
-use langdb_ai_gateway::otel::{TraceMap, TraceServiceImpl, TraceServiceServer};
-use langdb_ai_gateway::types::gateway::CostCalculator;
+use langdb_core::handler::chat::create_chat_completion;
+use langdb_core::handler::embedding::embeddings_handler;
+use langdb_core::handler::image::create_image;
+use langdb_core::handler::models::list_gateway_models;
+use langdb_core::handler::{AvailableModels, CallbackHandlerFn};
+use langdb_core::models::LlmModelDefinition;
+use langdb_core::otel::{TraceMap, TraceServiceImpl, TraceServiceServer};
+use langdb_core::types::gateway::CostCalculator;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use thiserror::Error;

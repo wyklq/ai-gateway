@@ -15,11 +15,11 @@ A Rust-based gateway service for interacting with various LLM providers (OpenAI,
 
 1. Clone the repository:
 ```bash
-git clone https://github.com/yourusername/langdb-ai-gateway.git
-cd langdb-ai-gateway
+git clone https://github.com/langdb/ai-gateway.git
+cd ai-gateway
 ```
 
-2. Create a configuration file `langdb-ai-gateway.config.yaml`:
+1. Copy file `config.yaml`:
 ```yaml
 rest:
   host: "127.0.0.1"
@@ -84,7 +84,7 @@ LANGDB_OPENAI_API_KEY=your-api-key cargo run
 curl http://localhost:8080/v1/chat/completions \
   -H "Content-Type: application/json" \
   -d '{
-    "model": "gpt-4",
+    "model": "gpt-4o-mini",
     "messages": [{"role": "user", "content": "Hello!"}]
   }'
 ```

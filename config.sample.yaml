@@ -6,7 +6,7 @@ rest:
     - "http://127.0.0.1:3000"
 
 models:
-  - model: "gpt-4"
+  - model: "gpt-4o-mini"
     model_provider: "openai"
     inference_provider:
       provider: "openai"
