@@ -2,6 +2,22 @@
 
 All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
 
+## 0.2.0 (2025-03-15)
+
+
+### Features
+
+* Add support of anthropic thinking ([1b2133e](https://github.com/langdb/langdb-cloud/commit/1b2133e92d7547a9464cb9965de2b6c8adeefaa3))
+* Support multiple identifiers in cost control ([05cbbdb](https://github.com/langdb/langdb-cloud/commit/05cbbdbf940cf6049675ae6692e4ec28b73f8824))
+* Implement guardrails system ([#46](https://github.com/langdb/langdb-cloud/issues/46)) ([cf9e2f3](https://github.com/langdb/langdb-cloud/commit/cf9e2f3236393f3bfb56d1f4257e8b9e3d5fa655))
+* Support custom endpoint for openai client ([#54](https://github.com/langdb/langdb-cloud/issues/54)) ([0b3e4d6](https://github.com/langdb/langdb-cloud/commit/0b3e4d6dd4498dd8ad6a770d45a93371f33546fd))
+
+### Bug Fixes
+* Fix ttft capturing ([#38](https://github.com/langdb/langdb-cloud/issues/38)) ([d5e650f](https://github.com/langdb/langdb-cloud/commit/d5e650f02f14d4652c162329b5c4b34eab3c6c28))
+* Fix models name in GET /models API ([ab74d60](https://github.com/langdb/langdb-cloud/commit/ab74d60a5d53aec15c045875fc2fa4f0a229c993))
+* Fix nested json schema ([c12a33a](https://github.com/langdb/langdb-cloud/commit/c12a33a3468467f67301a2562211104cb3c56334))
+* Support proxied engine types ([ef01992](https://github.com/langdb/langdb-cloud/commit/ef01992c939a846e356c5d9d3a15e2143c9aa053))
+
 ### 0.1.3 (2025-02-24)
 
 
