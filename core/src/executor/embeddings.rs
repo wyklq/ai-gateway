@@ -47,6 +47,8 @@ pub async fn handle_embeddings_invoke(
     let model_name = llm_model.model.clone();
 
     let callback_handler = callback_handler.clone();
+    let provider_name = llm_model.inference_provider.provider.to_string();
+    
     tokio::spawn(async move {
         while let Some(Some(msg)) = rx.recv().await {
             callback_handler.on_message(ModelEventWithDetails::new(
@@ -54,7 +56,7 @@ pub async fn handle_embeddings_invoke(
                 Model {
                     name: model_name.clone(),
                     description: None,
-                    provider_name: "openai".to_string(),
+                    provider_name,
                     prompt_name: None,
                     model_params: HashMap::new(),
                     execution_options: ExecutionOptions::default(),
@@ -85,7 +87,19 @@ pub async fn handle_embeddings_invoke(
         _ => None,
     };
 
-    let embed = OpenAIEmbed::new(params, key.as_ref(), custom_endpoint.as_deref())?;
+    let provider_name = &llm_model.inference_provider.provider.to_string();
+    let embed: Box<dyn Embed> = match llm_model.inference_provider.provider {
+        InferenceModelProvider::Ollama => {
+            let api_key = key.as_ref().map(|k| k.api_key.clone());
+            Box::new(crate::embed_mod::ollama::OllamaEmbed::new(
+                llm_model.model.clone(),
+                custom_endpoint,
+                api_key,
+            ))
+        }
+        _ => Box::new(OpenAIEmbed::new(params, key.as_ref(), custom_endpoint.as_deref())?)
+    };
+    
     embed
         .invoke(input, Some(tx.clone()))
         .instrument(span.clone())

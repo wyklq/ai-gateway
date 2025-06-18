@@ -51,6 +51,7 @@ pub enum InferenceModelProvider {
     Anthropic,
     Gemini,
     Bedrock,
+    Ollama,
     Proxy(String),
 }
 
@@ -61,6 +62,7 @@ impl From<String> for InferenceModelProvider {
             "anthropic" => InferenceModelProvider::Anthropic,
             "gemini" => InferenceModelProvider::Gemini,
             "bedrock" => InferenceModelProvider::Bedrock,
+            "ollama" => InferenceModelProvider::Ollama,
             other => InferenceModelProvider::Proxy(other.to_string()),
         }
     }
@@ -72,6 +74,7 @@ impl From<InferenceModelProvider> for String {
             InferenceModelProvider::Anthropic => "anthropic".to_string(),
             InferenceModelProvider::Gemini => "gemini".to_string(),
             InferenceModelProvider::Bedrock => "bedrock".to_string(),
+            InferenceModelProvider::Ollama => "ollama".to_string(),
             InferenceModelProvider::Proxy(other) => other,
         }
     }
@@ -84,6 +87,7 @@ impl std::fmt::Display for InferenceModelProvider {
             InferenceModelProvider::Anthropic => write!(f, "anthropic"),
             InferenceModelProvider::Gemini => write!(f, "gemini"),
             InferenceModelProvider::Bedrock => write!(f, "bedrock"),
+            InferenceModelProvider::Ollama => write!(f, "ollama"),
             InferenceModelProvider::Proxy(name) => write!(f, "{name}"),
         }
     }

@@ -184,6 +184,7 @@ pub enum EngineType {
     Bedrock,
     Anthropic,
     Gemini,
+    Ollama,
     AwsLambda,
     LangDBFunctions,
     Routing,
@@ -215,6 +216,7 @@ impl<'de> Deserialize<'de> for EngineType {
                     "bedrock" => Ok(EngineType::Bedrock),
                     "anthropic" => Ok(EngineType::Anthropic),
                     "gemini" => Ok(EngineType::Gemini),
+                    "ollama" => Ok(EngineType::Ollama),
                     "awslambda" => Ok(EngineType::AwsLambda),
                     "langdbfunctions" => Ok(EngineType::LangDBFunctions),
                     "routing" => Ok(EngineType::Routing),
@@ -240,6 +242,7 @@ impl Serialize for EngineType {
             EngineType::Bedrock => serializer.serialize_str("bedrock"),
             EngineType::Anthropic => serializer.serialize_str("anthropic"),
             EngineType::Gemini => serializer.serialize_str("gemini"),
+            EngineType::Ollama => serializer.serialize_str("ollama"),
             EngineType::AwsLambda => serializer.serialize_str("awslambda"),
             EngineType::LangDBFunctions => serializer.serialize_str("langdbfunctions"),
             EngineType::Routing => serializer.serialize_str("routing"),
@@ -376,6 +379,12 @@ pub enum CompletionEngineParams {
         execution_options: ExecutionOptions,
         params: GeminiModelParams,
     },
+    Ollama {
+        credentials: Option<ApiKeyCredentials>,
+        execution_options: ExecutionOptions,
+        params: OllamaModelParams,
+        endpoint: Option<String>,
+    },
     Proxy {
         params: OpenAiModelParams,
         execution_options: ExecutionOptions,
@@ -390,6 +399,7 @@ impl CompletionEngineParams {
             Self::Bedrock { .. } => "bedrock",
             Self::Anthropic { .. } => "anthropic",
             Self::Gemini { .. } => "gemini",
+            Self::Ollama { .. } => "ollama",
             Self::Proxy { .. } => "proxy",
         }
     }
@@ -405,6 +415,7 @@ impl CompletionEngineParams {
             },
             Self::Anthropic { .. } => "anthropic",
             Self::Gemini { .. } => "gemini",
+            Self::Ollama { .. } => "ollama",
             Self::Proxy { .. } => "proxy",
         }
     }
@@ -417,6 +428,7 @@ impl CompletionEngineParams {
             Self::Bedrock { params, .. } => params.model_id.as_deref(),
             Self::Anthropic { params, .. } => params.model.as_ref().map(|m| m.string.as_str()),
             Self::Gemini { params, .. } => params.model.as_deref(),
+            Self::Ollama { params, .. } => params.model.as_deref(),
             Self::Proxy { params, .. } => params.model.as_deref(),
         }
     }
@@ -425,6 +437,11 @@ impl CompletionEngineParams {
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub enum ImageGenerationEngineParams {
     OpenAi {
+        credentials: Option<ApiKeyCredentials>,
+        endpoint: Option<String>,
+        model_name: String,
+    },
+    Ollama {
         credentials: Option<ApiKeyCredentials>,
         endpoint: Option<String>,
         model_name: String,
@@ -525,6 +542,22 @@ pub struct OpenAiModelParams {
 
     #[serde(skip_serializing_if = "Option::is_none")]
     pub response_format: Option<ResponseFormat>,
+}
+
+#[derive(Debug, Default, Clone, Serialize, Deserialize)]
+pub enum OllamaResponseFormat {
+    #[default]
+    Json,
+}
+
+#[derive(Debug, Default, Clone, Serialize, Deserialize)]
+pub struct OllamaModelParams {
+    pub model: Option<String>,
+    pub temperature: Option<f32>,
+    pub top_p: Option<f32>,
+    pub max_tokens: Option<i32>,
+    pub stop: Option<Vec<String>>,
+    pub response_format: Option<OllamaResponseFormat>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, Validate)]

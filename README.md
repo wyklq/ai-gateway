@@ -1,4 +1,4 @@
-<div align="center">
+<div align="center>
 
 
 <img src="https://raw.githubusercontent.com/langdb/ai-gateway/main/assets/images/logos/icon_red.png" width="25px" alt="LangDB Logo">
@@ -114,6 +114,7 @@ LangDB AI Gateway currently supports the following LLM providers. Find all [the 
 | <img src="https://raw.githubusercontent.com/langdb/ai-gateway/main/assets/images/meta.png" width="32">            | Meta ( Provided by Bedrock )    |
 | <img src="https://raw.githubusercontent.com/langdb/ai-gateway/main/assets/images/cohere.png" width="32">          | Cohere ( Provided by Bedrock )  |
 | <img src="https://raw.githubusercontent.com/langdb/ai-gateway/main/assets/images/mistral.png" width="32">         | Mistral ( Provided by Bedrock ) |
+| <img src="https://raw.githubusercontent.com/langdb/ai-gateway/main/assets/images/ollama.png" width="32">         | Ollama ( Open Source models )   |
 
 ## API Endpoints
 
@@ -350,3 +351,93 @@ RUST_LOG=info cargo run serve   # For standard logs
 ## License
 
 This project is released under the [Apache License 2.0](./LICENSE.md). See the license file for more information.
+
+### Using with Ollama
+
+AI Gateway can connect to your local Ollama instance or any remote Ollama server.
+
+#### 1. Install and Start Ollama
+
+First, [install Ollama](https://ollama.ai/download) and start it:
+
+```bash
+# Pull some models
+ollama pull llama3
+ollama pull mistral
+ollama pull sdxl
+
+# Start Ollama server (default port: 11434)
+ollama serve
+```
+
+#### 2. Configure AI Gateway for Ollama
+
+Edit your `models.yaml` file to include Ollama models:
+
+```yaml
+- name: ollama/llama3
+  description: Llama3 model via Ollama
+  provider_name: ollama
+  model_params:
+    model: "llama3"
+  execution_options: {}
+  tools: []
+  type: completion
+
+- name: ollama/embeddings
+  description: Embedding model via Ollama
+  provider_name: ollama
+  model_params:
+    model: "nomic-embed-text"
+  execution_options: {}
+  tools: []
+  type: embedding
+
+- name: ollama/sdxl
+  description: Image generation via Ollama SDXL
+  provider_name: ollama
+  model_params:
+    model: "sdxl"
+  execution_options: {}
+  tools: []
+  type: image_generation
+```
+
+For a remote Ollama server, set the endpoint in your config:
+
+```yaml
+providers:
+  ollama:
+    api_key: "your-optional-api-key" # If your Ollama server requires authentication
+    endpoint: "http://your-ollama-server:11434" # Default is http://localhost:11434
+```
+
+#### 3. Make Requests
+
+Use the standard OpenAI API format with the Ollama model names:
+
+```bash
+# Chat completion request
+curl http://localhost:8080/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "ollama/llama3",
+    "messages": [{"role": "user", "content": "Hello!"}]
+  }'
+
+# Embedding request
+curl http://localhost:8080/v1/embeddings \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "ollama/embeddings",
+    "input": "The food was delicious and the service was excellent."
+  }'
+
+# Image generation request
+curl http://localhost:8080/v1/images/generations \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "ollama/sdxl",
+    "prompt": "A cat flying in space"
+  }'
+```

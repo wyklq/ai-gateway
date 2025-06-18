@@ -3,6 +3,7 @@ use crate::executor::context::ExecutorContext;
 use crate::model::bedrock::BedrockModel;
 use crate::model::cached::CachedModel;
 use crate::model::error::ModelError;
+use crate::model::ollama::OllamaModel;
 use crate::types::engine::{CompletionEngineParams, CompletionModelParams};
 use crate::types::engine::{CompletionModelDefinition, ModelTools, ModelType};
 use crate::types::gateway::{
@@ -39,6 +40,7 @@ pub mod gemini;
 pub mod image_generation;
 pub mod mcp;
 pub mod mcp_server;
+pub mod ollama;
 pub mod openai;
 pub mod openai_spec_client;
 pub mod proxy;
@@ -251,6 +253,25 @@ pub async fn init_completion_model_instance(
             initial_messages: initial_messages.clone(),
             response_cache_state: cache_state,
         })),
+        CompletionEngineParams::Ollama {
+            params,
+            execution_options,
+            credentials,
+            endpoint,
+        } => Ok(Box::new(TracedModel {
+            inner: OllamaModel::new(
+                params.clone(),
+                execution_options.clone(),
+                credentials.clone(),
+                endpoint.clone(),
+            ),
+            definition,
+            executor_context: executor_context.clone(),
+            router_span: router_span.clone(),
+            extra: extra.cloned(),
+            initial_messages: initial_messages.clone(),
+            response_cache_state: cache_state,
+        })),
     }
 }
 
@@ -322,6 +343,12 @@ impl TraceModelDefinition {
                 credentials.take();
             }
             CompletionEngineParams::Proxy {
+                ref mut credentials,
+                ..
+            } => {
+                credentials.take();
+            }
+            CompletionEngineParams::Ollama {
                 ref mut credentials,
                 ..
             } => {
@@ -642,6 +669,7 @@ pub fn credentials_identifier(model_params: &CompletionModelParams) -> Credentia
         CompletionEngineParams::Anthropic { credentials, .. } => credentials.is_none(),
         CompletionEngineParams::Gemini { credentials, .. } => credentials.is_none(),
         CompletionEngineParams::Proxy { credentials, .. } => credentials.is_none(),
+        CompletionEngineParams::Ollama { credentials, .. } => credentials.is_none(),
     };
 
     if langdb_creds {

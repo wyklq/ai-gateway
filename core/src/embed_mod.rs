@@ -21,6 +21,8 @@ use tracing::Instrument;
 use tracing::{field, Span};
 use valuable::Valuable;
 
+pub mod ollama;
+
 macro_rules! target {
     () => {
         "langdb::user_tracing::models::openai"

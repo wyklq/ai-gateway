@@ -3,6 +3,7 @@ use std::sync::Arc;
 
 use crate::model::error::ModelError;
 use langdb_open::OpenAISpecModel;
+use ollama::OllamaImageGeneration;
 use openai::OpenAIImageGeneration;
 use serde::Serialize;
 use serde_json::Value;
@@ -22,6 +23,7 @@ use super::CredentialsIdent;
 use tokio::sync::mpsc::channel;
 
 pub mod langdb_open;
+pub mod ollama;
 pub mod openai;
 
 #[async_trait::async_trait]
@@ -44,6 +46,7 @@ fn initialize_image_generation_model_instance(
         ImageGenerationEngineParams::OpenAi {
             credentials,
             endpoint,
+            model_name,
             ..
         } => Ok(Box::new(TracedImageGenerationModel {
             inner: OpenAIImageGeneration::new(
@@ -51,6 +54,20 @@ fn initialize_image_generation_model_instance(
                 None,
                 endpoint.as_ref().map(|s| s.as_str()),
             )?,
+            definition: definition.clone(),
+            cost_calculator: cost_calculator.clone(),
+        })),
+        ImageGenerationEngineParams::Ollama {
+            credentials,
+            endpoint,
+            model_name,
+            ..
+        } => Ok(Box::new(TracedImageGenerationModel {
+            inner: OllamaImageGeneration::new(
+                model_name.clone(),
+                credentials.clone(),
+                endpoint.clone(),
+            ),
             definition: definition.clone(),
             cost_calculator: cost_calculator.clone(),
         })),
