@@ -6,18 +6,18 @@ use crate::types::credentials::ApiKeyCredentials;
 use crate::types::engine::ExecutionOptions;
 use crate::types::engine::{OllamaModelParams, OllamaResponseFormat};
 use crate::types::gateway::{
-    ChatCompletionContent, ChatCompletionMessage, ContentType, Usage,
+    ChatCompletionContent, ChatCompletionMessage, Usage, CompletionModelUsage,
 };
+use async_openai::types::{EmbeddingInput, CreateEmbeddingResponse};
 use async_trait::async_trait;
 use reqwest::header::{HeaderMap, HeaderValue};
 use reqwest::{Client, Url};
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize};
 use serde_json::json;
-use std::collections::HashMap;
 use tokio::sync::mpsc::Sender;
-use tracing::{debug, error, info};
+use tracing::{error};
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct OllamaModel {
     pub client: Client,
     pub credentials: Option<ApiKeyCredentials>,
@@ -106,7 +106,7 @@ impl OllamaModel {
     async fn parse_chat_completion_response(
         &self,
         response: serde_json::Value,
-    ) -> Result<ChatCompletionContent, ModelError> {
+    ) -> Result<ChatCompletionMessage, ModelError> {
         #[derive(Deserialize)]
         struct OllamaResponse {
             model: String,
@@ -130,14 +130,11 @@ impl OllamaModel {
         let response_obj = serde_json::from_value::<OllamaResponse>(response.clone())
             .map_err(|e| ModelError::ParsingResponseFailed(format!("Failed to parse Ollama response: {}", e)))?;
 
-        // Extract and convert the text content
-        let content = ChatCompletionContent {
-            content_type: ContentType::Text,
-            text: Some(response_obj.message.content),
-            ..Default::default()
-        };
-
-        Ok(content)
+        let message = ChatCompletionMessage::new_text(
+            response_obj.message.role,
+            response_obj.message.content,
+        );
+        Ok(message)
     }
     
     async fn parse_embedding_response(
@@ -171,11 +168,14 @@ impl OllamaModel {
     }
 
     fn calculate_usage(&self, prompt_tokens: Option<u32>, completion_tokens: Option<u32>) -> Usage {
-        Usage {
-            prompt_tokens: prompt_tokens.unwrap_or(0),
-            completion_tokens: completion_tokens.unwrap_or(0),
+        Usage::CompletionModelUsage(CompletionModelUsage {
+            input_tokens: prompt_tokens.unwrap_or(0),
+            output_tokens: completion_tokens.unwrap_or(0),
             total_tokens: prompt_tokens.unwrap_or(0) + completion_tokens.unwrap_or(0),
-        }
+            prompt_tokens_details: None,
+            completion_tokens_details: None,
+            is_cache_used: false,
+        })
     }
 
     fn get_base_url(&self) -> Result<Url, ModelError> {
@@ -193,7 +193,7 @@ impl OllamaModel {
         // Format messages for Ollama API format
         let formatted_messages: Vec<serde_json::Value> = messages.iter().map(|msg| {
             let content = match &msg.content {
-                Some(ChatCompletionContent { text: Some(text), .. }) => text.clone(),
+                Some(ChatCompletionContent::Text(text)) => text.clone(),
                 _ => String::new(),
             };
 
@@ -259,93 +259,28 @@ impl ModelInstance for OllamaModel {
         &self,
         messages: &[ChatCompletionMessage],
         tx: &Sender<Option<ModelEvent>>,
-    ) -> Result<(ChatCompletionContent, Usage), ModelError> {
+    ) -> Result<(ChatCompletionMessage, Usage), ModelError> {
         let base_url = self.get_base_url()?;
         let url = base_url.join("api/chat").map_err(|e| {
             ModelError::ConfigurationError(format!("Failed to construct Ollama API URL: {}", e))
         })?;
-        
         let request_body = self.build_chat_request(messages);
-        
-        // Send the request
         let response = self.send_request(url, request_body, tx).await?;
-        
-        // Parse the response
-        let content = self.parse_chat_completion_response(response.clone()).await?;
-        
-        // Calculate usage (estimated)
-        // Ollama doesn't provide token counts in its response, so we're making an estimation
+        let message = self.parse_chat_completion_response(response.clone()).await?;
         let prompt_length: u32 = messages.iter().map(|m| {
-            match &m.content {
-                Some(ChatCompletionContent { text: Some(t), .. }) => t.len() as u32,
-                _ => 0,
-            }
+            m.content.as_ref().and_then(|c| c.as_string()).map_or(0, |t| t.len() as u32)
         }).sum();
-        
-        let completion_length = content.text.as_ref().map_or(0, |t| t.len() as u32);
-        
-        // Rough estimation: ~4 characters per token
+        let completion_length = message.content.as_ref().and_then(|c| c.as_string()).map_or(0, |t| t.len() as u32);
         let prompt_tokens = Some(prompt_length / 4);
         let completion_tokens = Some(completion_length / 4);
-        
         let usage = self.calculate_usage(prompt_tokens, completion_tokens);
-        
-        Ok((content, usage))
+        Ok((message, usage))
     }
 
     async fn embed(
         &self,
-        text: &str,
-        tx: &Sender<Option<ModelEvent>>,
-    ) -> Result<(Vec<f32>, Usage), ModelError> {
-        let base_url = self.get_base_url()?;
-        let url = base_url.join("api/embeddings").map_err(|e| {
-            ModelError::ConfigurationError(format!("Failed to construct Ollama embeddings API URL: {}", e))
-        })?;
-        
-        let request_body = self.build_embedding_request(text);
-        
-        // Send the request
-        let response = self.send_request(url, request_body, tx).await?;
-        
-        // Parse the response
-        let embeddings = self.parse_embedding_response(response).await?;
-        
-        // Calculate usage (estimated)
-        let text_length = text.len() as u32;
-        // Rough estimation: ~4 characters per token
-        let prompt_tokens = Some(text_length / 4);
-        
-        let usage = self.calculate_usage(prompt_tokens, None);
-        
-        Ok((embeddings, usage))
-    }
-
-    async fn generate_image(
-        &self,
-        prompt: &str,
-        tx: &Sender<Option<ModelEvent>>,
-    ) -> Result<(Vec<String>, Usage), ModelError> {
-        let base_url = self.get_base_url()?;
-        let url = base_url.join("api/generate").map_err(|e| {
-            ModelError::ConfigurationError(format!("Failed to construct Ollama image generation API URL: {}", e))
-        })?;
-        
-        let request_body = self.build_image_request(prompt);
-        
-        // Send the request
-        let response = self.send_request(url, request_body, tx).await?;
-        
-        // Parse the response
-        let images = self.parse_image_generation_response(response).await?;
-        
-        // Calculate usage (estimated)
-        let prompt_length = prompt.len() as u32;
-        // Rough estimation: ~4 characters per token
-        let prompt_tokens = Some(prompt_length / 4);
-        
-        let usage = self.calculate_usage(prompt_tokens, None);
-        
-        Ok((images, usage))
+        _input: EmbeddingInput,
+    ) -> Result<CreateEmbeddingResponse, ModelError> {
+        unimplemented!("embed not implemented for OllamaModel yet");
     }
 }

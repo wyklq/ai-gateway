@@ -64,6 +64,13 @@ pub trait ModelInstance: Sync + Send {
         previous_messages: Vec<Message>,
         tags: HashMap<String, String>,
     ) -> GatewayResult<()>;
+
+    async fn embed(
+        &self,
+        input: async_openai::types::EmbeddingInput,
+    ) -> Result<async_openai::types::CreateEmbeddingResponse, ModelError> {
+        unimplemented!("embed not implemented for this model");
+    }
 }
 
 pub const DEFAULT_MAX_RETRIES: i32 = 5;

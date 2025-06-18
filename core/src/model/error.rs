@@ -54,6 +54,18 @@ pub enum ModelError {
 
     #[error("Model {0} not found")]
     ModelNotFound(String),
+
+    #[error("Request failed: {0}")]
+    RequestFailed(String),
+
+    #[error("Parsing response failed: {0}")]
+    ParsingResponseFailed(String),
+
+    #[error("Sending results failed: {0}")]
+    SendingResultsFailed(String),
+
+    #[error("Configuration error: {0}")]
+    ConfigurationError(String),
 }
 
 impl From<BedrockError> for ModelError {

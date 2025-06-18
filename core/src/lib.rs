@@ -1,6 +1,7 @@
 #[cfg(feature = "database")]
 pub mod database;
 pub mod embed_mod;
+pub mod embed_mod_ollama; // 注册 ollama embedding 模块
 pub mod error;
 pub mod events;
 pub mod executor;

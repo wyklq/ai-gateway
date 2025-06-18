@@ -14,7 +14,7 @@ use crate::{
         provider::{BedrockProvider, InferenceModelProvider},
     },
 };
-
+use crate::types::engine::OllamaResponseFormat;
 use crate::error::GatewayError;
 
 pub struct Provider {}

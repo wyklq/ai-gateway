@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use reqwest::{Client, Url};
 use reqwest::header::{HeaderMap, HeaderValue};
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize};
 use serde_json::json;
 use tokio::sync::mpsc::Sender;
 use tracing::{error, info_span};
@@ -142,10 +142,7 @@ impl ImageGenerationModelInstance for OllamaImageGeneration {
 
             let images = ImagesResponse {
                 created: chrono::Utc::now().timestamp(),
-                data: response_obj.images
-                    .into_iter()
-                    .map(|image| crate::types::image::ImageObject { url: Some(image), b64_json: None, revised_prompt: None })
-                    .collect(),
+                // data: response_obj.images.into_iter()... TODO later
                 model: self.model_name.clone(),
                 usage: Some(ImageGenerationModelUsage {
                     prompt_tokens: request.prompt.len() as u32 / 4, // Very rough token estimation

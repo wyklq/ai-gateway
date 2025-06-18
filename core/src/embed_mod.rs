@@ -20,8 +20,7 @@ use serde_json::Value;
 use tracing::Instrument;
 use tracing::{field, Span};
 use valuable::Valuable;
-
-pub mod ollama;
+use async_trait::async_trait;
 
 macro_rules! target {
     () => {
@@ -33,6 +32,7 @@ macro_rules! target {
 }
 
 #[allow(async_fn_in_trait)]
+#[async_trait]
 pub trait Embed: Sync + Send {
     async fn invoke(
         &self,
@@ -41,8 +41,8 @@ pub trait Embed: Sync + Send {
     ) -> GatewayResult<CreateEmbeddingResponse>;
     async fn batched_invoke(
         &self,
-        inputs: impl Stream<Item = GatewayResult<(String, Vec<Value>)>>,
-    ) -> impl Stream<Item = GatewayResult<Vec<(Vec<f32>, Vec<Value>)>>>;
+        inputs: Box<dyn Stream<Item = GatewayResult<(String, Vec<Value>)>> + Send + Unpin>,
+    ) -> Box<dyn Stream<Item = GatewayResult<Vec<(Vec<f32>, Vec<Value>)>>> + Send + Unpin>;
 }
 
 #[derive(Clone)]
@@ -161,8 +161,8 @@ impl Embed for OpenAIEmbed {
 
     async fn batched_invoke(
         &self,
-        inputs: impl Stream<Item = GatewayResult<(String, Vec<Value>)>>,
-    ) -> impl Stream<Item = GatewayResult<Vec<(Vec<f32>, Vec<Value>)>>> {
+        inputs: Box<dyn Stream<Item = GatewayResult<(String, Vec<Value>)>> + Send + Unpin>,
+    ) -> Box<dyn Stream<Item = GatewayResult<Vec<(Vec<f32>, Vec<Value>)>>> + Send + Unpin> {
         inputs
             .try_ready_chunks(2048)
             .map_err(|TryReadyChunksError(_, e)| e)
