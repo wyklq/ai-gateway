@@ -47,7 +47,6 @@ build_udfs: ${TMPDIR}
 build_gateways: ${TMPDIR}
 	cargo zigbuild --profile ${PROFILE} \
 		--target ${X86_CONTAINER_TARGET} \
-		--target ${ARM_CONTAINER_TARGET} \
 		--bin ai-gateway
 
 ${TMPDIR}:

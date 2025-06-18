@@ -4,7 +4,7 @@ use async_openai::config::Config;
 use reqwest::header::{HeaderMap, AUTHORIZATION};
 use secrecy::{ExposeSecret, SecretString};
 use serde::{Deserialize, Serialize};
-pub const LANGDB_API_BASE: &str = "https://api.us-east-1.langdb.ai/v1";
+pub const LANGDB_API_BASE: &str = "https://XXXXXX.langdb.ai/v1";
 /// Project header
 pub const LANGDB_PROJECT_HEADER: &str = "X-Project-Id";
 

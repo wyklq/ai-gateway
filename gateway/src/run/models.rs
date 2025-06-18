@@ -35,16 +35,52 @@ pub async fn fetch_and_store_models() -> Result<String, ModelsLoadError> {
     fs::create_dir_all(&langdb_dir)?;
 
     // Fetch models from API
-    let client = reqwest::Client::new();
-    let response = client
-        .get("https://api.us-east-1.langdb.ai/pricing")
-        .send()
-        .await?
-        .json::<serde_json::Value>()
-        .await?;
-
+    // let client = reqwest::Client::new();
+    // let response = client
+    //    .get("https://api.us-east-1.langdb.ai/pricing")
+    //    .send()
+    //    .await?
+    //    .json::<serde_json::Value>()
+    //    .await?;
     // Convert to YAML
-    let yaml = serde_yaml::to_string(&response)?;
+    //    let yaml = serde_yaml::to_string(&response)?;
+    let yaml = r#"
+- model: o1-mini
+  model_provider: openai
+  inference_provider:
+    provider: openai
+    model_name: o1-mini
+    endpoint: null
+  price:
+    per_input_token: 3.0
+    per_output_token: 12.0
+    valid_from: null
+  input_formats:
+  - text
+  output_formats:
+  - text
+  capabilities: []
+  type: completions
+  limits:
+    max_context_size: 128000
+  description: The o1 series of large language models are trained with reinforcement learning to perform complex reasoning. o1 models think before they answer, producing a long internal chain of thought before responding to the user. Faster and cheaper reasoning model particularly good at coding, math, and science
+  parameters:
+    max_tokens:
+      default: 1000
+      description: The maximum number of tokens that can be generated in the completion. The token count of your prompt plus max_tokens cannot exceed the model's context length.
+      max: null
+      min: null
+      required: false
+      type: int
+    seed:
+      default: null
+      description: If specified, our system will make a best effort to sample deterministically, such that repeated requests with the same seed and parameters should return the same result. Determinism is not guaranteed, and you should refer to the system_fingerprint response parameter to monitor changes in the backend.
+      max: null
+      min: null
+      required: false
+      step: 1
+      type: int
+    "#.to_string(); // Placeholder for actual YAML content
 
     // Store in models.yaml
     let models_path = langdb_dir.join("models.yaml");
