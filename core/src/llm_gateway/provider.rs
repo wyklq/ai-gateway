@@ -183,12 +183,17 @@ impl Provider {
                 // Convert response format if it exists
                 let response_format = match &request.response_format {
                     Some(format) => {
-                        if format.r#type == "json_object" {
-                            Some(OllamaResponseFormat::Json)
+                        let value = serde_json::to_value(format).ok();
+                        if let Some(val) = value {
+                            if val.get("type") == Some(&serde_json::Value::String("json_object".to_string())) {
+                                Some(OllamaResponseFormat::Json)
+                            } else {
+                                None
+                            }
                         } else {
                             None
                         }
-                    },
+                    }
                     None => None,
                 };
 

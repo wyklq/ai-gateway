@@ -2,18 +2,18 @@ use crate::model::ollama::OllamaModel;
 use crate::types::engine::OllamaModelParams;
 use crate::model::CredentialsIdent;
 use crate::types::credentials::ApiKeyCredentials;
-use crate::types::gateway::CompletionModelUsage;
+use crate::types::gateway::{EmbeddingUsage, Input, CreateEmbeddingResponse as GatewayEmbeddingResponse, EmbeddingData};
 use crate::GatewayError;
 use crate::GatewayResult;
 use crate::model::types::{ModelEvent, ModelEventType, ModelFinishReason, LLMFinishEvent};
 use futures::stream::TryReadyChunksError;
 use futures::{Stream, TryStreamExt};
 use serde_json::Value;
-use tracing::Instrument;
-use tracing::{field, Span};
+use tracing::{Span};
 use async_trait::async_trait;
 use crate::embed_mod::Embed;
-use async_openai::types::{EmbeddingInput, CreateEmbeddingResponse};
+use crate::model::ModelInstance;
+use std::pin::Pin;
 
 #[derive(Clone)]
 pub struct OllamaEmbed {
@@ -50,7 +50,10 @@ impl OllamaEmbed {
         span: Span,
         tx: Option<&tokio::sync::mpsc::Sender<Option<ModelEvent>>>,
     ) -> GatewayResult<Vec<f32>> {
-        let (embedding, usage) = self.model.embed(&input, &tokio::sync::mpsc::channel(1).0).await.map_err(GatewayError::from)?;
+        let embedding_input = async_openai::types::EmbeddingInput::String(input);
+        let response = self.model.embed(embedding_input).await.map_err(GatewayError::from)?;
+        // 这里只取第一个 embedding
+        let embedding = response.data.get(0).map(|e| e.embedding.clone()).unwrap_or_default();
         if let Some(tx) = tx {
             tx.send(Some(ModelEvent::new(
                 &span,
@@ -58,12 +61,7 @@ impl OllamaEmbed {
                     provider_name: "ollama".to_string(),
                     model_name: self.params.model.clone().unwrap_or_default(),
                     output: None,
-                    usage: Some(CompletionModelUsage {
-                        input_tokens: usage.prompt_tokens,
-                        output_tokens: 0,
-                        total_tokens: usage.total_tokens,
-                        ..Default::default()
-                    }),
+                    usage: None,
                     finish_reason: ModelFinishReason::Stop,
                     tool_calls: vec![],
                     credentials_ident: self.credentials_ident.clone(),
@@ -80,51 +78,56 @@ impl OllamaEmbed {
 impl Embed for OllamaEmbed {
     async fn invoke(
         &self,
-        input_text: EmbeddingInput,
+        input_text: Input,
         tx: Option<tokio::sync::mpsc::Sender<Option<ModelEvent>>>,
-    ) -> GatewayResult<CreateEmbeddingResponse> {
-        let mut data = Vec::new();
-        let mut usage = CompletionModelUsage::default();
-        let texts: Vec<String> = match input_text {
-            EmbeddingInput::String(s) => vec![s],
-            EmbeddingInput::Array(arr) => arr,
+    ) -> GatewayResult<GatewayEmbeddingResponse> {
+        let input = match input_text {
+            Input::String(s) => s,
+            Input::Array(arr) => {
+                // Ollama 暂不支持批量，取第一个
+                arr.into_iter().next().ok_or_else(|| GatewayError::CustomError("Ollama embedding only supports String input".to_string()))?
+            }
         };
-        for (i, input_str) in texts.into_iter().enumerate() {
-            let call_span = tracing::info_span!(target: "embedding", "ollama", input = input_str, output = field::Empty, ttft = field::Empty, error = field::Empty, usage = field::Empty);
-            let embedding = self.execute(input_str.clone(), call_span.clone(), tx.as_ref()).instrument(call_span.clone()).await?;
-            data.push(async_openai::types::Embedding {
-                index: i as i32,
-                embedding,
-                object: "embedding".to_string(),
-            });
-            // usage 统计可累加
-        }
-        Ok(CreateEmbeddingResponse {
+        let call_span = tracing::info_span!("embedding_ollama", input = &input);
+        let embedding = self.execute(input, call_span.clone(), tx.as_ref()).await?;
+        // Ollama 只返回一个 embedding
+        let data = vec![EmbeddingData {
+            object: "embedding".to_string(),
+            embedding,
+            index: 0,
+        }];
+        Ok(GatewayEmbeddingResponse {
             object: "list".to_string(),
             data,
             model: self.params.model.clone().unwrap_or_default(),
-            usage,
+            usage: EmbeddingUsage {
+                prompt_tokens: 0,
+                total_tokens: 0,
+            },
         })
     }
 
     async fn batched_invoke(
         &self,
         inputs: Box<dyn Stream<Item = GatewayResult<(String, Vec<Value>)>> + Send + Unpin>,
-    ) -> Box<dyn Stream<Item = GatewayResult<Vec<(Vec<f32>, Vec<Value>)>>> + Send + Unpin> {
-        Box::new(inputs
+    ) -> Pin<Box<dyn Stream<Item = GatewayResult<Vec<(Vec<f32>, Vec<Value>)>>> + Send + '_>> {
+        Box::pin(inputs
             .try_ready_chunks(2048)
             .map_err(|TryReadyChunksError(_, e)| e)
             .map_ok(|chunk| {
-                let chunk_text: Vec<String> = chunk.iter().map(|(text, _)| text.to_string()).collect();
-                let values: Vec<Vec<Value>> = chunk.iter().map(|(_, values)| values.clone()).collect();
+                let chunk_text: Vec<String> =
+                    chunk.iter().map(|(text, _)| text.to_string()).collect();
+                let values: Vec<Vec<Value>> =
+                    chunk.iter().map(|(_, values)| values.clone()).collect();
                 async {
                     let span = Span::current();
-                    let mut results = Vec::new();
+                    // Ollama 暂不支持批量，逐个处理
+                    let mut result = Vec::new();
                     for text in chunk_text {
                         let embedding = self.execute(text, span.clone(), None).await?;
-                        results.push(embedding);
+                        result.push(embedding);
                     }
-                    Ok((results, values))
+                    Ok((result, values))
                 }
             })
             .try_buffered(10)

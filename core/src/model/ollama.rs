@@ -1,4 +1,3 @@
-use crate::events::JsonValue;
 use crate::model::error::ModelError;
 use crate::model::types::{ModelEvent, ModelEventType};
 use crate::model::ModelInstance;
@@ -16,6 +15,10 @@ use serde::{Deserialize};
 use serde_json::json;
 use tokio::sync::mpsc::Sender;
 use tracing::{error};
+use std::collections::HashMap;
+use serde_json::Value;
+use crate::types::threads::Message;
+use crate::GatewayResult;
 
 #[derive(Debug, Clone)]
 pub struct OllamaModel {
@@ -67,7 +70,6 @@ impl OllamaModel {
         tx: &Sender<Option<ModelEvent>>
     ) -> Result<serde_json::Value, ModelError> {
         let headers = self.build_headers();
-        
         let response = self
             .client
             .post(url)
@@ -93,12 +95,12 @@ impl OllamaModel {
         })?;
 
         // Send the model event with the raw response
-        tx.send(Some(ModelEvent {
-            model_type: ModelEventType::Data,
-            data: JsonValue::Object(json.clone()),
-        }))
-        .await
-        .map_err(|_| ModelError::SendingResultsFailed("Failed to send model event".to_string()))?;
+        let _ = tx.send(Some(ModelEvent::new(
+            &tracing::Span::current(),
+            ModelEventType::LlmContent(crate::model::types::LLMContentEvent {
+                content: json.to_string(),
+            })
+        ))).await;
 
         Ok(json)
     }
@@ -257,15 +259,24 @@ impl OllamaModel {
 impl ModelInstance for OllamaModel {
     async fn invoke(
         &self,
-        messages: &[ChatCompletionMessage],
-        tx: &Sender<Option<ModelEvent>>,
-    ) -> Result<(ChatCompletionMessage, Usage), ModelError> {
+        input_vars: HashMap<String, Value>,
+        tx: Sender<Option<ModelEvent>>,
+        previous_messages: Vec<Message>,
+        tags: HashMap<String, String>,
+    ) -> GatewayResult<ChatCompletionMessage> {
+        // 仅支持文本消息，转换 Message 为 ChatCompletionMessage
+        let messages: Vec<ChatCompletionMessage> = previous_messages.iter().map(|m| {
+            ChatCompletionMessage::new_text(
+                m.r#type.to_string(),
+                m.content.clone().unwrap_or_default(),
+            )
+        }).collect();
         let base_url = self.get_base_url()?;
         let url = base_url.join("api/chat").map_err(|e| {
             ModelError::ConfigurationError(format!("Failed to construct Ollama API URL: {}", e))
         })?;
-        let request_body = self.build_chat_request(messages);
-        let response = self.send_request(url, request_body, tx).await?;
+        let request_body = self.build_chat_request(&messages);
+        let response = self.send_request(url, request_body, &tx).await?;
         let message = self.parse_chat_completion_response(response.clone()).await?;
         let prompt_length: u32 = messages.iter().map(|m| {
             m.content.as_ref().and_then(|c| c.as_string()).map_or(0, |t| t.len() as u32)
@@ -274,7 +285,38 @@ impl ModelInstance for OllamaModel {
         let prompt_tokens = Some(prompt_length / 4);
         let completion_tokens = Some(completion_length / 4);
         let usage = self.calculate_usage(prompt_tokens, completion_tokens);
-        Ok((message, usage))
+        let credentials_ident = if self.credentials.is_none() {
+            crate::model::CredentialsIdent::Langdb
+        } else {
+            crate::model::CredentialsIdent::Own
+        };
+        // 发送 LlmStop 事件
+        let _ = tx.send(Some(ModelEvent::new(
+            &tracing::Span::current(),
+            ModelEventType::LlmStop(crate::model::types::LLMFinishEvent {
+                provider_name: "ollama".to_string(),
+                model_name: self.params.model.clone().unwrap_or_default(),
+                output: message.content.as_ref().and_then(|c| c.as_string()),
+                usage: Some(match usage {
+                    Usage::CompletionModelUsage(u) => u,
+                    _ => Default::default(),
+                }),
+                finish_reason: crate::model::types::ModelFinishReason::Stop,
+                tool_calls: vec![],
+                credentials_ident,
+            })
+        ))).await;
+        Ok(message)
+    }
+
+    async fn stream(
+        &self,
+        _input_vars: HashMap<String, Value>,
+        _tx: Sender<Option<ModelEvent>>,
+        _previous_messages: Vec<Message>,
+        _tags: HashMap<String, String>,
+    ) -> GatewayResult<()> {
+        Err(ModelError::RequestFailed("Ollama stream not implemented".to_string()).into())
     }
 
     async fn embed(

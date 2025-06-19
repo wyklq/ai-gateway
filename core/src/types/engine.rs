@@ -157,6 +157,9 @@ impl CompletionModelDefinition {
             CompletionEngineParams::Proxy { params, .. } => {
                 params.model.clone().unwrap_or_default()
             }
+            CompletionEngineParams::Ollama { params, .. } => {
+                params.model.clone().unwrap_or_default()
+            }
         }
     }
 
@@ -167,6 +170,7 @@ impl CompletionModelDefinition {
             CompletionEngineParams::Anthropic { .. } => "anthropic".to_string(),
             CompletionEngineParams::Gemini { .. } => "gemini".to_string(),
             CompletionEngineParams::Proxy { .. } => "langdb_open".to_string(),
+            CompletionEngineParams::Ollama { .. } => "ollama".to_string(),
         }
     }
 }
@@ -264,7 +268,7 @@ impl Display for EngineType {
             EngineType::LangDBFunctions => write!(f, "langdbfunctions"),
             EngineType::Routing => write!(f, "routing"),
             EngineType::Secrets => write!(f, "secrets"),
-            // For Proxy, display the original string directly
+            EngineType::Ollama => write!(f, "ollama"),
             EngineType::Proxy(name) => write!(f, "{name}"),
         }
     }
@@ -351,6 +355,7 @@ impl EngineType {
             EngineType::Routing => &[EngineFeature::Completions],
             EngineType::Secrets => &[EngineFeature::Integrations],
             EngineType::Proxy(_) => &[EngineFeature::Completions, EngineFeature::Embeddings],
+            EngineType::Ollama => &[EngineFeature::Completions, EngineFeature::Embeddings],
         }
     }
 }
@@ -457,6 +462,7 @@ impl ImageGenerationEngineParams {
         match self {
             Self::OpenAi { .. } => "openai".to_string(),
             Self::LangdbOpen { .. } => "langdb_open".to_string(),
+            Self::Ollama { .. } => "ollama".to_string(),
         }
     }
 
@@ -464,6 +470,7 @@ impl ImageGenerationEngineParams {
         match self {
             Self::OpenAi { .. } => "openai".to_string(),
             Self::LangdbOpen { .. } => "langdb_open".to_string(),
+            Self::Ollama { .. } => "ollama".to_string(),
         }
     }
 }

@@ -9,13 +9,12 @@ use crate::models::ModelMetadata;
 use crate::types::credentials::ApiKeyCredentials;
 use crate::types::credentials::Credentials;
 use actix_web::HttpRequest;
-use async_openai::types::EmbeddingInput;
 use tracing::Span;
 
 use crate::types::embed::OpenAiEmbeddingParams;
+use crate::types::gateway::{CreateEmbeddingRequest, CreateEmbeddingResponse};
 use crate::types::{
     engine::{ExecutionOptions, Model, ModelTools, ModelType, OllamaModelParams},
-    gateway::{CreateEmbeddingRequest, Input},
 };
 use tracing_futures::Instrument;
 
@@ -31,18 +30,13 @@ pub async fn handle_embeddings_invoke(
     llm_model: &ModelMetadata,
     key_credentials: Option<&Credentials>,
     req: HttpRequest,
-) -> Result<async_openai::types::CreateEmbeddingResponse, GatewayError> {
+) -> Result<CreateEmbeddingResponse, GatewayError> {
     let span = Span::current();
     request.model = llm_model.inference_provider.model_name.clone();
 
     let params = OpenAiEmbeddingParams {
         model: Some(llm_model.model.clone()),
         dimensions: request.dimensions,
-    };
-
-    let input: EmbeddingInput = match &request.input {
-        Input::String(s) => s.into(),
-        Input::Array(vec) => vec.into(),
     };
 
     let (tx, mut rx) = tokio::sync::mpsc::channel::<Option<ModelEvent>>(1000);
@@ -58,7 +52,7 @@ pub async fn handle_embeddings_invoke(
                 Model {
                     name: model_name.clone(),
                     description: None,
-                    provider_name,
+                    provider_name: provider_name.clone(),
                     prompt_name: None,
                     model_params: HashMap::new(),
                     execution_options: ExecutionOptions::default(),
@@ -113,7 +107,7 @@ pub async fn handle_embeddings_invoke(
     
     // 调用 embedding API
     embed
-        .invoke(input, Some(tx.clone()))
+        .invoke(request.input.clone(), Some(tx.clone()))
         .instrument(span.clone())
         .await
 }

@@ -8,7 +8,7 @@ use crate::model::types::ModelFinishReason;
 use crate::model::CredentialsIdent;
 use crate::types::credentials::ApiKeyCredentials;
 use crate::types::embed::OpenAiEmbeddingParams;
-use crate::types::gateway::CompletionModelUsage;
+use crate::types::gateway::{CompletionModelUsage, Input, CreateEmbeddingResponse as GatewayEmbeddingResponse};
 use crate::GatewayError;
 use crate::GatewayResult;
 use async_openai::config::OpenAIConfig;
@@ -21,6 +21,7 @@ use tracing::Instrument;
 use tracing::{field, Span};
 use valuable::Valuable;
 use async_trait::async_trait;
+use std::pin::Pin;
 
 macro_rules! target {
     () => {
@@ -36,13 +37,13 @@ macro_rules! target {
 pub trait Embed: Sync + Send {
     async fn invoke(
         &self,
-        input_text: EmbeddingInput,
+        input_text: Input,
         tx: Option<tokio::sync::mpsc::Sender<Option<ModelEvent>>>,
-    ) -> GatewayResult<CreateEmbeddingResponse>;
+    ) -> GatewayResult<crate::types::gateway::CreateEmbeddingResponse>;
     async fn batched_invoke(
         &self,
         inputs: Box<dyn Stream<Item = GatewayResult<(String, Vec<Value>)>> + Send + Unpin>,
-    ) -> Box<dyn Stream<Item = GatewayResult<Vec<(Vec<f32>, Vec<Value>)>>> + Send + Unpin>;
+    ) -> Pin<Box<dyn Stream<Item = GatewayResult<Vec<(Vec<f32>, Vec<Value>)>>> + Send + '_>>;
 }
 
 #[derive(Clone)]
@@ -145,25 +146,47 @@ impl OpenAIEmbed {
     }
 }
 
+#[async_trait]
 impl Embed for OpenAIEmbed {
     async fn invoke(
         &self,
-        input_text: EmbeddingInput,
+        input_text: Input,
         tx: Option<tokio::sync::mpsc::Sender<Option<ModelEvent>>>,
-    ) -> GatewayResult<CreateEmbeddingResponse> {
+    ) -> GatewayResult<crate::types::gateway::CreateEmbeddingResponse> {
         let input = serde_json::to_string(&input_text)?;
         let call_span = tracing::info_span!(target: target!("embedding"), SPAN_OPENAI, input = input, output = field::Empty, ttft = field::Empty, error = field::Empty, usage = field::Empty);
 
-        self.execute(input_text, call_span.clone(), tx.as_ref())
+        // Input -> EmbeddingInput
+        let embedding_input = match input_text {
+            Input::String(s) => EmbeddingInput::String(s),
+            Input::Array(arr) => EmbeddingInput::from(arr),
+        };
+
+        let response = self.execute(embedding_input, call_span.clone(), tx.as_ref())
             .instrument(call_span.clone())
-            .await
+            .await?;
+        // 转换为主流程类型
+        let data = response.data.into_iter().map(|e| crate::types::gateway::EmbeddingData {
+            object: e.object,
+            embedding: e.embedding,
+            index: e.index as u32,
+        }).collect();
+        Ok(GatewayEmbeddingResponse {
+            object: response.object,
+            data,
+            model: response.model,
+            usage: crate::types::gateway::EmbeddingUsage {
+                prompt_tokens: response.usage.prompt_tokens,
+                total_tokens: response.usage.total_tokens,
+            },
+        })
     }
 
     async fn batched_invoke(
         &self,
         inputs: Box<dyn Stream<Item = GatewayResult<(String, Vec<Value>)>> + Send + Unpin>,
-    ) -> Box<dyn Stream<Item = GatewayResult<Vec<(Vec<f32>, Vec<Value>)>>> + Send + Unpin> {
-        inputs
+    ) -> Pin<Box<dyn Stream<Item = GatewayResult<Vec<(Vec<f32>, Vec<Value>)>>> + Send + '_>> {
+        Box::pin(inputs
             .try_ready_chunks(2048)
             .map_err(|TryReadyChunksError(_, e)| e)
             .map_ok(|chunk| {
@@ -173,15 +196,14 @@ impl Embed for OpenAIEmbed {
                     chunk.iter().map(|(_, values)| values.clone()).collect();
                 async {
                     let span = Span::current();
-                    let embeddings = self.execute(chunk_text.into(), span, None).await?;
-
-                    Ok((embeddings, values))
+                    let embeddings = self.execute(EmbeddingInput::from(chunk_text), span, None).await?;
+                    let x: Vec<Vec<f32>> = embeddings.data.into_iter().map(|e| e.embedding).collect();
+                    Ok((x, values))
                 }
             })
             .try_buffered(10)
             .map_ok(|(embeddings, values)| {
-                let x: Vec<Vec<f32>> = embeddings.data.into_iter().map(|e| e.embedding).collect();
-                x.into_iter().zip(values.into_iter()).collect()
-            })
+                embeddings.into_iter().zip(values.into_iter()).collect()
+            }))
     }
 }

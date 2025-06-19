@@ -126,6 +126,9 @@ impl TracedImageGenerationModelDefinition {
             } => {
                 credentials.take();
             }
+            ImageGenerationEngineParams::Ollama { .. } => {
+                // Ollama 暂不支持 image generation
+            }
         }
         let model = serde_json::to_value(&model)?;
         Ok(model)
@@ -141,6 +144,7 @@ impl TracedImageGenerationModelDefinition {
                 Some(_) => CredentialsIdent::Own,
                 None => CredentialsIdent::Langdb,
             },
+            ImageGenerationEngineParams::Ollama { .. } => CredentialsIdent::Langdb, // 默认
         }
     }
 }
