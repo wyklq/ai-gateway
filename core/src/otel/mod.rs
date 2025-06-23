@@ -338,17 +338,7 @@ impl TraceService for TraceServiceImpl {
                     let tenant_id = attributes
                         .remove("langdb.tenant")
                         .and_then(|v| Some(v.as_str()?.to_owned()))
-                        .or(tenant_from_header.as_ref().map(|v| v.0.clone()));
-
-                    if tenant_id.is_none() {
-                        tracing::debug!(
-                            target: "otel",
-                            "No tenant id found in span {} with attributes: {:#?}",
-                            span.name,
-                            attributes
-                        );
-                        continue;
-                    }
+                        .or(Some("unknown".to_string()));
 
                     let project_id = attributes
                         .remove("langdb.project_id")
