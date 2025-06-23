@@ -46,7 +46,7 @@ fn initialize_image_generation_model_instance(
         ImageGenerationEngineParams::OpenAi {
             credentials,
             endpoint,
-            model_name,
+            
             ..
         } => Ok(Box::new(TracedImageGenerationModel {
             inner: OpenAIImageGeneration::new(
