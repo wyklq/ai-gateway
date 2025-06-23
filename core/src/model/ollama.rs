@@ -14,11 +14,13 @@ use reqwest::{Client, Url};
 use serde::{Deserialize};
 use serde_json::json;
 use tokio::sync::mpsc::Sender;
-use tracing::{error};
+use tracing::{error, Span, field};
 use std::collections::HashMap;
 use serde_json::Value;
 use crate::types::threads::Message;
 use crate::GatewayResult;
+use tracing_opentelemetry::OpenTelemetrySpanExt;
+use opentelemetry::trace::TraceContextExt;
 
 #[derive(Debug, Clone)]
 pub struct OllamaModel {
@@ -38,7 +40,7 @@ impl OllamaModel {
     ) -> Self {
         let client = Client::new();
 
-        println!("[OllamaModel::new] endpoint = {:?}", endpoint);
+        tracing::debug!(target: "ollama_debug", "[OllamaModel::new] endpoint = {:?}", endpoint);
 
         Self {
             client,
@@ -72,14 +74,21 @@ impl OllamaModel {
         tx: &Sender<Option<ModelEvent>>
     ) -> Result<serde_json::Value, ModelError> {
         let headers = self.build_headers();
+        // Use the current span which should be properly set up from invoke
+        let span = Span::current();
+        
+        // Log the request body for tracing
+        span.record("request_body", &body.to_string());
+        
         let response = self
             .client
-            .post(url)
+            .post(url.clone())
             .headers(headers)
             .json(&body)
             .send()
             .await
             .map_err(|e| {
+                span.record("error", &format!("Failed to send request: {}", e));
                 error!("Failed to send request: {}", e);
                 ModelError::RequestFailed(format!("Failed to send request: {}", e))
             })?;
@@ -87,18 +96,21 @@ impl OllamaModel {
         if !response.status().is_success() {
             let status = response.status();
             let error_text = response.text().await.unwrap_or_else(|_| "Unknown error".to_string());
+            span.record("error", &format!("Request failed with status {}: {}", status, error_text));
             error!("Request failed with status {}: {}", status, error_text);
             return Err(ModelError::RequestFailed(format!("Request failed with status {}: {}", status, error_text)));
         }
 
         let json = response.json::<serde_json::Value>().await.map_err(|e| {
+            span.record("error", &format!("Failed to parse response: {}", e));
             error!("Failed to parse response: {}", e);
             ModelError::ParsingResponseFailed(format!("Failed to parse response: {}", e))
         })?;
 
+        span.record("output", &json.to_string());
         // Send the model event with the raw response
         let _ = tx.send(Some(ModelEvent::new(
-            &tracing::Span::current(),
+            &span,
             ModelEventType::LlmContent(crate::model::types::LLMContentEvent {
                 content: json.to_string(),
             })
@@ -262,18 +274,46 @@ impl ModelInstance for OllamaModel {
                 m.content.clone().unwrap_or_default(),
             )
         }).collect();
+        
+        // Create a span specifically for this request
+        let span = tracing::info_span!(
+            "ollama_chat",
+            provider = "ollama",
+            model = self.params.model.clone().unwrap_or_default(),
+            input = field::Empty,
+            output = field::Empty,
+            error = field::Empty,
+            usage = field::Empty,
+            tags = ?tags
+        );
+        let _enter = span.enter();
+        tracing::debug!(target: "ollama_debug", "[OllamaModel::invoke] span trace_id = {:?}, span_id = {:?}", span.context().span().span_context().trace_id(), span.context().span().span_context().span_id());
+        // Send LlmStart event to properly initialize trace context
+        let _ = tx.send(Some(ModelEvent::new(
+            &tracing::Span::current(),
+            ModelEventType::LlmStart(crate::model::types::LLMStartEvent {
+                provider_name: "ollama".to_string(),
+                model_name: self.params.model.clone().unwrap_or_default(),
+                input: serde_json::to_string(&messages).unwrap_or_default(),
+            })
+        ))).await;
+        tracing::debug!(target: "ollama_debug", "[OllamaModel::invoke] Sent LlmStart event");
         // 打印 endpoint 相关 debug 信息
-        println!("[OllamaModel::invoke] self.endpoint = {:?}, self.params.model = {:?}", self.endpoint, self.params.model);
+        tracing::debug!(target: "ollama_debug", "[OllamaModel::invoke] self.endpoint = {:?}, self.params.model = {:?}", self.endpoint, self.params.model);
         let base_url = self.get_base_url()?;
-        println!("[OllamaModel::invoke] base_url = {}", base_url);
+        tracing::debug!(target: "ollama_debug", "[OllamaModel::invoke] base_url = {}", base_url);
         // NOTE: Url::join 而非 String.join, chat 和 /chat 的处理不同，涉及到是否保留 /v1
         let url = base_url.join("/v1/chat/completions").map_err(|e| {
             ModelError::ConfigurationError(format!("Failed to construct Ollama API URL: {}", e))
         })?;
-        println!("[OllamaModel::invoke] final url = {}", url);
+        tracing::debug!(target: "ollama_debug", "[OllamaModel::invoke] final url = {}", url);
         let request_body = self.build_chat_request(&messages);
+        // Send request and record the span event with proper trace context
         let response = self.send_request(url, request_body, &tx).await?;
+        tracing::debug!(target: "ollama_debug", "[OllamaModel::invoke] Got response: {:?}", response);
         let message = self.parse_chat_completion_response(response.clone()).await?;
+        // Record the response in the span
+        span.record("output", &format!("{:?}", message));
         let prompt_length: u32 = messages.iter().map(|m| {
             m.content.as_ref().and_then(|c| c.as_string()).map_or(0, |t| t.len() as u32)
         }).sum();
@@ -281,6 +321,8 @@ impl ModelInstance for OllamaModel {
         let prompt_tokens = Some(prompt_length / 4);
         let completion_tokens = Some(completion_length / 4);
         let usage = self.calculate_usage(prompt_tokens, completion_tokens);
+        // Update usage in span
+        span.record("usage", &format!("{:?}", usage));
         let credentials_ident = if self.credentials.is_none() {
             crate::model::CredentialsIdent::Langdb
         } else {
@@ -302,16 +344,38 @@ impl ModelInstance for OllamaModel {
                 credentials_ident,
             })
         ))).await;
+        tracing::debug!(target: "ollama_debug", "[OllamaModel::invoke] Sent LlmStop event");
         Ok(message)
     }
 
     async fn stream(
         &self,
-        _input_vars: HashMap<String, Value>,
-        _tx: Sender<Option<ModelEvent>>,
-        _previous_messages: Vec<Message>,
-        _tags: HashMap<String, String>,
+        input_vars: HashMap<String, Value>,
+        tx: Sender<Option<ModelEvent>>,
+        previous_messages: Vec<Message>,
+        tags: HashMap<String, String>,
     ) -> GatewayResult<()> {
+        // Create a span specifically for this stream request
+        let span = tracing::info_span!(
+            "ollama_chat_stream",
+            provider = "ollama",
+            model = self.params.model.clone().unwrap_or_default(),
+            input = field::Empty,
+            error = field::Empty,
+            tags = ?tags
+        );
+        let _guard = span.enter();
+        // Send LlmStart event to properly initialize trace context
+        let _ = tx.send(Some(ModelEvent::new(
+            &tracing::Span::current(),
+            ModelEventType::LlmStart(crate::model::types::LLMStartEvent {
+                provider_name: "ollama".to_string(),
+                model_name: self.params.model.clone().unwrap_or_default(),
+                input: serde_json::to_string(&previous_messages).unwrap_or_default(),
+            })
+        ))).await;
+        // For now, streaming is not implemented
+        span.record("error", &"Ollama streaming not implemented");
         Err(ModelError::RequestFailed("Ollama stream not implemented".to_string()).into())
     }
 

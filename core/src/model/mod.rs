@@ -129,7 +129,7 @@ pub async fn init_completion_model_instance(
 
     // print endpoint and provider name for debugging
     if let Some(ep) = endpoint {
-        println!("[init_completion_model_instance] endpoint = {}", ep);
+        tracing::debug!(target: "init_completion_model_instance", "[init_completion_model_instance] endpoint = {}", ep);
     }
     
     match &definition.model_params.engine {

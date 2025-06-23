@@ -42,6 +42,12 @@ pub fn init_callback_handler(
                             );
                         }
                         ModelEventType::LlmFirstToken(_) => {
+                            println!(
+                                "Handling LlmFirstToken for trace_id: {}. Current start_times keys: {:?}. Model event: {:?}",
+                                model_event.event.trace_id,
+                                start_times.lock().await.keys().cloned().collect::<Vec<_>>(),
+                                model_event
+                            );
                             let ttft = {
                                 let times = start_times.lock().await;
                                 if let Some(start_time) = times.get(&model_event.event.trace_id) {
@@ -52,8 +58,10 @@ pub fn init_callback_handler(
                                     Some(ttft_ms)
                                 } else {
                                     tracing::warn!(
-                                        "No start time found for trace {}",
-                                        model_event.event.trace_id
+                                        "No start time found for trace {}. Current start_times keys: {:?}. Model event: {:?}",
+                                        model_event.event.trace_id,
+                                        times.keys().cloned().collect::<Vec<_>>(),
+                                        model_event
                                     );
                                     None
                                 }
