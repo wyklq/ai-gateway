@@ -164,6 +164,12 @@ impl RoutedExecutor {
 
         let llm_model =
             find_model_by_full_name(&request.request.model, &executor_context.provided_models)?;
+        println!(
+            "[routed_executor] model_name: {}, provider: {:?}, endpoint: {:?}",
+            llm_model.model,
+            llm_model.inference_provider.provider,
+            llm_model.inference_provider.endpoint
+        );
         let response = execute(
             request,
             executor_context,

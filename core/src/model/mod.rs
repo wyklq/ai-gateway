@@ -127,6 +127,11 @@ pub async fn init_completion_model_instance(
         }));
     }
 
+    // print endpoint and provider name for debugging
+    if let Some(ep) = endpoint {
+        println!("[init_completion_model_instance] endpoint = {}", ep);
+    }
+    
     match &definition.model_params.engine {
         CompletionEngineParams::Bedrock {
             params,
@@ -197,7 +202,7 @@ pub async fn init_completion_model_instance(
                 initial_messages: initial_messages.clone(),
                 response_cache_state: cache_state,
             }))
-        }
+        },
         CompletionEngineParams::Proxy {
             params,
             execution_options,
@@ -221,7 +226,7 @@ pub async fn init_completion_model_instance(
                 initial_messages: initial_messages.clone(),
                 response_cache_state: cache_state,
             }))
-        }
+        },
         CompletionEngineParams::Anthropic {
             credentials,
             execution_options,
@@ -270,7 +275,7 @@ pub async fn init_completion_model_instance(
                 params.clone(),
                 execution_options.clone(),
                 credentials.clone(),
-                endpoint.clone(),
+                endpoint.as_ref().map(|s| s.to_string()),
             ),
             definition,
             executor_context: executor_context.clone(),

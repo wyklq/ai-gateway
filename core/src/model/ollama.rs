@@ -38,6 +38,8 @@ impl OllamaModel {
     ) -> Self {
         let client = Client::new();
 
+        println!("[OllamaModel::new] endpoint = {:?}", endpoint);
+
         Self {
             client,
             credentials,
@@ -271,10 +273,14 @@ impl ModelInstance for OllamaModel {
                 m.content.clone().unwrap_or_default(),
             )
         }).collect();
+        // 打印 endpoint 相关 debug 信息
+        println!("[OllamaModel::invoke] self.endpoint = {:?}, self.params.model = {:?}", self.endpoint, self.params.model);
         let base_url = self.get_base_url()?;
+        println!("[OllamaModel::invoke] base_url = {}", base_url);
         let url = base_url.join("api/chat").map_err(|e| {
             ModelError::ConfigurationError(format!("Failed to construct Ollama API URL: {}", e))
         })?;
+        println!("[OllamaModel::invoke] final url = {}", url);
         let request_body = self.build_chat_request(&messages);
         let response = self.send_request(url, request_body, &tx).await?;
         let message = self.parse_chat_completion_response(response.clone()).await?;

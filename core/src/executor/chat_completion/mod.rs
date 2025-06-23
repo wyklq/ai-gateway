@@ -309,6 +309,15 @@ pub async fn resolve_model_instance<T: Serialize + DeserializeOwned + Debug + Cl
         db_model: db_model.clone(),
     };
 
+    println!(
+        "Resolved model instance for request: {}, model: {}, endpoint: {}",
+        request.model,
+        llm_model.model,
+        llm_model.inference_provider.endpoint
+            .as_deref()
+            .unwrap_or("None")
+    );
+
     let model_instance = crate::model::init_completion_model_instance(
         completion_model_definition.clone(),
         tools_map,
