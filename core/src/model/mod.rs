@@ -269,13 +269,13 @@ pub async fn init_completion_model_instance(
             params,
             execution_options,
             credentials,
-            endpoint,
+            .. // 忽略解构的 endpoint
         } => Ok(Box::new(TracedModel {
             inner: OllamaModel::new(
                 params.clone(),
                 execution_options.clone(),
                 credentials.clone(),
-                endpoint.as_ref().map(|s| s.to_string()),
+                endpoint.map(|s| s.to_string()),
             ),
             definition,
             executor_context: executor_context.clone(),
