@@ -6,9 +6,9 @@ use serde::{Deserialize, Serialize};
 pub enum MessageType {
     #[serde(rename = "system")]
     SystemMessage,
-    #[serde(rename = "ai")]
+    #[serde(rename = "assistant")]
     AIMessage,
-    #[serde(rename = "human")]
+    #[serde(rename = "user")]
     HumanMessage,
     #[serde(rename = "tool")]
     ToolResult,
@@ -18,8 +18,8 @@ impl Display for MessageType {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             MessageType::SystemMessage => f.write_str("system"),
-            MessageType::AIMessage => f.write_str("ai"),
-            MessageType::HumanMessage => f.write_str("human"),
+            MessageType::AIMessage => f.write_str("assistant"),
+            MessageType::HumanMessage => f.write_str("user"),
             MessageType::ToolResult => f.write_str("tool"),
         }
     }

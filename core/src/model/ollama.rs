@@ -111,34 +111,23 @@ impl OllamaModel {
         &self,
         response: serde_json::Value,
     ) -> Result<ChatCompletionMessage, ModelError> {
-        #[derive(Deserialize)]
-        struct OllamaResponse {
-            model: String,
-            created_at: Option<String>,
-            message: OllamaMessage,
-            done: bool,
-            total_duration: Option<u64>,
-            load_duration: Option<u64>,
-            prompt_eval_count: Option<u64>,
-            prompt_eval_duration: Option<u64>,
-            eval_count: Option<u64>,
-            eval_duration: Option<u64>,
-        }
+        // 适配 OpenAI 风格的返回格式
+        let message = response
+            .get("choices")
+            .and_then(|choices| choices.get(0))
+            .and_then(|choice| choice.get("message"))
+            .ok_or_else(|| ModelError::ParsingResponseFailed("Missing choices[0].message".to_string()))?;
 
-        #[derive(Deserialize)]
-        struct OllamaMessage {
-            role: String,
-            content: String,
-        }
+        let role = message.get("role")
+            .and_then(|v| v.as_str())
+            .unwrap_or("assistant")
+            .to_string();
+        let content = message.get("content")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
 
-        let response_obj = serde_json::from_value::<OllamaResponse>(response.clone())
-            .map_err(|e| ModelError::ParsingResponseFailed(format!("Failed to parse Ollama response: {}", e)))?;
-
-        let message = ChatCompletionMessage::new_text(
-            response_obj.message.role,
-            response_obj.message.content,
-        );
-        Ok(message)
+        Ok(ChatCompletionMessage::new_text(role, content))
     }
     
     async fn parse_embedding_response(
@@ -277,7 +266,8 @@ impl ModelInstance for OllamaModel {
         println!("[OllamaModel::invoke] self.endpoint = {:?}, self.params.model = {:?}", self.endpoint, self.params.model);
         let base_url = self.get_base_url()?;
         println!("[OllamaModel::invoke] base_url = {}", base_url);
-        let url = base_url.join("api/chat").map_err(|e| {
+        // NOTE: Url::join 而非 String.join, chat 和 /chat 的处理不同，涉及到是否保留 /v1
+        let url = base_url.join("/v1/chat/completions").map_err(|e| {
             ModelError::ConfigurationError(format!("Failed to construct Ollama API URL: {}", e))
         })?;
         println!("[OllamaModel::invoke] final url = {}", url);
