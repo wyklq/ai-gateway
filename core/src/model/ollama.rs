@@ -70,6 +70,10 @@ impl OllamaModel {
         }
     }
 
+    pub fn get_model_name(&self) -> String {
+        self.validate_model().unwrap_or_else(|_| "".to_string())
+    }
+
     fn build_headers(&self) -> HeaderMap {
         let mut headers = HeaderMap::new();
         

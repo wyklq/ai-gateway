@@ -48,6 +48,7 @@ pub async fn handle_embeddings_invoke(
 
     let callback_handler = callback_handler.clone();
     let provider_name = llm_model.inference_provider.provider.to_string();
+    let span = Span::current(); // 确保 span 被 clone
     
     tokio::spawn(async move {
         while let Some(Some(msg)) = rx.recv().await {
@@ -87,13 +88,13 @@ pub async fn handle_embeddings_invoke(
         _ => None,
     };
 
-    let provider_name = &llm_model.inference_provider.provider.to_string();
+    let _provider_name = &llm_model.inference_provider.provider.to_string();
     // Provider selection: instantiate the correct Embed implementation
     let embed: Box<dyn Embed> = match llm_model.inference_provider.provider {
         InferenceModelProvider::Ollama => {
             // 直接用 OllamaModelParams 构造
             let params = OllamaModelParams {
-                model: Some(llm_model.model.clone()),
+                model: Some(llm_model.inference_provider.model_name.clone()),
                 temperature: None,
                 top_p: None,
                 max_tokens: None,

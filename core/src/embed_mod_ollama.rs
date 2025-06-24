@@ -54,12 +54,14 @@ impl OllamaEmbed {
         let response = self.model.embed(embedding_input).await.map_err(GatewayError::from)?;
         // 这里只取第一个 embedding
         let embedding = response.data.get(0).map(|e| e.embedding.clone()).unwrap_or_default();
+        let model_name = self.model.get_model_name();
         if let Some(tx) = tx {
+            let _guard = span.enter();
             tx.send(Some(ModelEvent::new(
                 &span,
                 ModelEventType::LlmStop(LLMFinishEvent {
                     provider_name: "ollama".to_string(),
-                    model_name: self.params.model.clone().unwrap_or_default(),
+                    model_name,
                     output: None,
                     usage: None,
                     finish_reason: ModelFinishReason::Stop,
@@ -90,6 +92,7 @@ impl Embed for OllamaEmbed {
         };
         let call_span = tracing::info_span!("embedding_ollama", input = &input);
         let embedding = self.execute(input, call_span.clone(), tx.as_ref()).await?;
+        let model_name = self.model.get_model_name();
         // Ollama 只返回一个 embedding
         let data = vec![EmbeddingData {
             object: "embedding".to_string(),
@@ -99,7 +102,7 @@ impl Embed for OllamaEmbed {
         Ok(GatewayEmbeddingResponse {
             object: "list".to_string(),
             data,
-            model: self.params.model.clone().unwrap_or_default(),
+            model: model_name,
             usage: EmbeddingUsage {
                 prompt_tokens: 0,
                 total_tokens: 0,
