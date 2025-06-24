@@ -48,7 +48,10 @@ pub async fn create_chat_completion(
 ) -> Result<HttpResponse, GatewayApiError> {
     can_execute_llm_for_request(&req).await?;
 
-    let span = Span::or_current(tracing::info_span!(
+    // 获取 client IP 并写入 tags
+    let client_ip = req.connection_info().realip_remote_addr().unwrap_or("unknown").to_string();
+
+    let span: Span = Span::or_current(tracing::info_span!(
         target: "langdb::user_tracing::api_invoke",
         "api_invoke",
         request = tracing::field::Empty,
@@ -57,6 +60,7 @@ pub async fn create_chat_completion(
         thread_id = tracing::field::Empty,
         message_id = tracing::field::Empty,
         user = tracing::field::Empty,
+        tenant_id = client_ip.clone(),
     ));
 
     if let Some(Extra {
@@ -80,9 +84,13 @@ pub async fn create_chat_completion(
         guardrails_evaluator_service,
     )?;
 
+    let mut tags = HashMap::new();
+    tags.insert("tenant_id".to_string(), client_ip);
+
+    // 将 tags 传递给 executor
     let executor = RoutedExecutor::new(request.clone());
     executor
-        .execute(&executor_context, traces.get_ref(), memory_storage)
+        .execute_with_tags(&executor_context, traces.get_ref(), memory_storage, tags)
         .instrument(span.clone())
         .await
 }

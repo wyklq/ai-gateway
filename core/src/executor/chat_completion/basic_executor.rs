@@ -68,11 +68,11 @@ pub async fn execute(
     let finish_reason = match (&response.tool_calls, &response.content) {
         (Some(_), _) => {
             let calls = serde_json::to_string(&response.tool_calls).unwrap();
-            span.record("response", calls);
+            span.record("response", &calls);
             Ok("tool_calls".to_string())
         }
         (None, Some(c)) => {
-            span.record("response", c.as_string());
+            span.record("response", &c.as_string());
             Ok("stop".to_string())
         }
         _ => Err(GatewayApiError::GatewayError(GatewayError::CustomError(
@@ -114,4 +114,65 @@ pub async fn execute(
     };
 
     Ok(response)
+}
+
+#[allow(clippy::too_many_arguments)]
+pub async fn execute_with_tags(
+    request: ChatCompletionRequest,
+    model: Box<dyn ModelInstance>,
+    messages: Vec<Message>,
+    tags: HashMap<String, String>,
+    tx: tokio::sync::mpsc::Sender<Option<ModelEvent>>,
+    span: Span,
+    handle: Option<FinishEventHandle>,
+    input_vars: HashMap<String, serde_json::Value>,
+    cache_context: BasicCacheContext,
+) -> Result<ChatCompletionResponse, GatewayApiError> {
+    let (inner_tx, mut rx) = tokio::sync::mpsc::channel::<Option<ModelEvent>>(100);
+    tokio::spawn(async move {
+        while let Some(event) = rx.recv().await {
+            if let Some(sender) = &cache_context.events_sender {
+                sender.send(event.clone()).await.unwrap();
+            }
+            tx.send(event).await.unwrap();
+        }
+    });
+    let response = model
+        .invoke(input_vars.clone(), inner_tx, messages.clone(), tags.clone())
+        .instrument(span.clone())
+        .await
+        .map_err(|e| record_map_err(e, span.clone()))?;
+    if let Some(response_sender) = cache_context.response_sender {
+        response_sender.send(response.clone()).unwrap();
+    }
+    let finish_reason = match (&response.tool_calls, &response.content) {
+        (Some(_), _) => {
+            let calls = serde_json::to_string(&response.tool_calls).unwrap();
+            span.record("response", &calls);
+            Ok("tool_calls".to_string())
+        }
+        (None, Some(c)) => {
+            span.record("response", &c.as_string());
+            Ok("stop".to_string())
+        }
+        _ => Err(GatewayApiError::GatewayError(GatewayError::CustomError(
+            "No content in response".to_string(),
+        ))),
+    }?;
+
+    // 构造 ChatCompletionResponse
+    let chat_response = ChatCompletionResponse {
+        id: Uuid::new_v4().to_string(),
+        object: "chat.completion".to_string(),
+        created: chrono::Utc::now().timestamp(),
+        model: request.model.clone(),
+        choices: vec![ChatCompletionChoice {
+            index: 0,
+            message: response.clone(),
+            finish_reason: Some(finish_reason.clone()),
+        }],
+        usage: ChatCompletionUsage { ..Default::default() },
+        is_cache_used: None,
+    };
+    Ok(chat_response)
 }

@@ -30,8 +30,12 @@ pub async fn handle_embeddings_invoke(
     llm_model: &ModelMetadata,
     key_credentials: Option<&Credentials>,
     req: HttpRequest,
+    tags: HashMap<String, String>,
 ) -> Result<CreateEmbeddingResponse, GatewayError> {
+    // 从 tags 获取 tenant_id
+    let tenant_id = tags.get("tenant_id").cloned().unwrap_or_else(|| "unknown".to_string());
     let span = Span::current();
+    span.record("tenant_id", &tenant_id);
     request.model = llm_model.inference_provider.model_name.clone();
 
     let params = OpenAiEmbeddingParams {
@@ -66,7 +70,7 @@ pub async fn handle_embeddings_invoke(
     });
 
     let providers_config = req.app_data::<ProvidersConfig>().cloned();
-    let mut custom_endpoint = None;
+    let mut custom_endpoint = llm_model.inference_provider.endpoint.clone();
     let key = match get_key_credentials(
         key_credentials,
         providers_config.as_ref(),

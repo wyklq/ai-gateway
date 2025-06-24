@@ -347,3 +347,216 @@ pub struct ResolvedModelContext {
     pub db_model: Model,
     pub llm_model: ModelMetadata,
 }
+
+pub async fn execute_with_tags<T: Serialize + DeserializeOwned + Debug + Clone>(
+    request_with_tools: &ChatCompletionRequestWithTools<T>,
+    executor_context: &ExecutorContext,
+    router_span: tracing::Span,
+    stream_cache_context: StreamCacheContext,
+    basic_cache_context: BasicCacheContext,
+    tags: Option<HashMap<String, String>>,
+) -> Result<
+    Either<
+        Result<ChatCompletionStream, GatewayApiError>,
+        Result<ChatCompletionResponse, GatewayApiError>,
+    >,
+    GatewayApiError,
+> {
+    let span = Span::current();
+
+    let mut request_tools = vec![];
+    let mut tools_map = HashMap::new();
+    if let Some(tools) = &request_with_tools.request.tools {
+        for tool in tools {
+            request_tools.push(ModelTool {
+                name: tool.function.name.clone(),
+                description: tool.function.description.clone(),
+                passed_args: vec![],
+            });
+
+            tools_map.insert(
+                tool.function.name.clone(),
+                Box::new(GatewayTool { def: tool.clone() }) as Box<dyn Tool>,
+            );
+        }
+    }
+
+    let mcp_tools = match &request_with_tools.mcp_servers {
+        Some(tools) => get_tools(tools)
+            .await
+            .map_err(|e| GatewayError::McpServerError(Box::new(e)))?,
+        None => Vec::new(),
+    };
+
+    for server_tools in mcp_tools {
+        for tool in server_tools.tools {
+            tools_map.insert(tool.name(), Box::new(tool.clone()) as Box<dyn Tool>);
+            request_tools.push(tool.into());
+        }
+    }
+
+    let (tx, mut rx) = tokio::sync::mpsc::channel::<Option<ModelEvent>>(1000);
+
+    let tools = ModelTools(request_tools);
+
+    let mut cached_instance = None;
+    let mut cache_state = match request_with_tools.extra {
+        Some(Extra { cache: Some(_), .. }) => Some(ResponseCacheState::Miss),
+        _ => None,
+    };
+    if request_with_tools.request.stream.unwrap_or(false) {
+        if let Some(events) = &stream_cache_context.cached_events {
+            cached_instance = Some(CachedModel::new(events.clone(), None));
+            cache_state = Some(ResponseCacheState::Hit);
+        }
+    } else if let Some(events) = &basic_cache_context.cached_events {
+        if let Some(response) = &basic_cache_context.cached_response {
+            cached_instance = Some(CachedModel::new(events.clone(), Some(response.clone())));
+            cache_state = Some(ResponseCacheState::Hit);
+        }
+    }
+
+    let resolved_model_context = resolve_model_instance(
+        executor_context,
+        request_with_tools,
+        tools_map,
+        tools,
+        router_span,
+        request_with_tools.extra.as_ref(),
+        request_with_tools.request.messages.clone(),
+        cached_instance,
+        cache_state,
+    )
+    .await?;
+
+    let mut request = request_with_tools.request.clone();
+    let llm_model = find_model_by_full_name(&request.model, &executor_context.provided_models)?;
+    request.model = llm_model.inference_provider.model_name.clone();
+
+    let user: String = request
+        .user
+        .as_ref()
+        .map_or(Uuid::new_v4().to_string(), |v| v.clone());
+
+    let mut messages = vec![];
+
+    for message in &request.messages {
+        messages.push(MessageMapper::map_completions_message_to_langdb_message(
+            message,
+            &request.model,
+            &user.to_string(),
+        )?);
+    }
+    let ch = executor_context.callbackhandler.clone();
+    let db_model = resolved_model_context.db_model.clone();
+    let handle = tokio::spawn(async move {
+        let mut stop_event = None;
+        let mut tool_calls = None;
+        while let Some(Some(msg)) = rx.recv().await {
+            if let ModelEvent {
+                event: ModelEventType::LlmStop(e),
+                ..
+            } = &msg
+            {
+                stop_event = Some(e.clone());
+            }
+
+            if let ModelEvent {
+                event: ModelEventType::ToolStart(e),
+                ..
+            } = &msg
+            {
+                if tool_calls.is_none() {
+                    tool_calls = Some(vec![]);
+                }
+                tool_calls.as_mut().unwrap().push(e.clone());
+            }
+
+            ch.on_message(ModelEventWithDetails::new(msg, db_model.clone()));
+        }
+
+        (stop_event, tool_calls)
+    });
+
+    let is_stream = request.stream.unwrap_or(false);
+    if is_stream {
+        // if let Some(Extra { guards, .. }) = &request_with_tools.extra {
+        //     if !guardrails.is_empty() {
+        //         for guardrail in guardrails {
+        //             let guard_stage = match guardrail {
+        //                 GuardOrName::Guard(guard) => guard.stage(),
+        //                 GuardOrName::GuardWithParameters(GuardWithParameters { id, .. }) => {
+        //                     executor_context
+        //                         .guards
+        //                         .as_ref()
+        //                         .and_then(|guards| guards.get(id))
+        //                         .ok_or_else(|| {
+        //                             GatewayApiError::GuardError(GuardError::GuardNotFound(
+        //                                 id.clone(),
+        //                             ))
+        //                         })?
+        //                         .stage()
+        //                 }
+        //             };
+
+        //             if guard_stage == &GuardStage::Output {
+        //                 return Err(GatewayApiError::GuardError(
+        //                     GuardError::OutputGuardrailsNotSupportedInStreaming,
+        //                 ));
+        //             }
+        //         }
+        //     }
+        // }
+    }
+
+    let input_vars = request_with_tools
+        .extra
+        .as_ref()
+        .and_then(|e| e.variables.clone())
+        .unwrap_or_default();
+    if is_stream {
+        Ok(Left(
+            stream_chunks(
+                resolved_model_context.completion_model_definition,
+                resolved_model_context.model_instance,
+                messages.clone(),
+                executor_context.callbackhandler.clone().into(),
+                executor_context.tags.clone(),
+                input_vars,
+                stream_cache_context,
+            )
+            .instrument(span)
+            .await,
+        ))
+    } else {
+        let result = basic_executor::execute_with_tags(
+            request,
+            resolved_model_context.model_instance,
+            messages.clone(),
+            executor_context.tags.clone(),
+            tx,
+            span.clone(),
+            Some(handle),
+            input_vars,
+            basic_cache_context,
+        )
+        .instrument(span)
+        .await;
+
+        // if let Ok(completion_response) = &result {
+        //     let ChatCompletionResponse { choices, .. } = completion_response;
+        //     for choice in choices {
+        //         apply_guardrails(
+        //             &[choice.message.clone()],
+        //             request_with_tools.extra.as_ref(),
+        //             executor_context.evaluator_service.as_ref().as_ref(),
+        //             executor_context,
+        //             GuardStage::Output,
+        //         )
+        //         .await?;
+        //     }
+        // }
+
+        Ok(Right(result))
+    }
+}

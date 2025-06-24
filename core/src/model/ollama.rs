@@ -1,5 +1,6 @@
 use crate::model::error::ModelError;
-use crate::model::types::{ModelEvent, ModelEventType};
+use crate::model::types::{LLMContentEvent, LLMFinishEvent, LLMStartEvent,
+    ModelEvent, ModelEventType, ModelFinishReason, ModelToolCall};
 use crate::model::ModelInstance;
 use crate::types::credentials::ApiKeyCredentials;
 use crate::types::engine::ExecutionOptions;
@@ -9,6 +10,7 @@ use crate::types::gateway::{
 };
 use async_openai::types::{EmbeddingInput, CreateEmbeddingResponse};
 use async_trait::async_trait;
+use aws_config::imds::client::error;
 use reqwest::header::{HeaderMap, HeaderValue};
 use reqwest::{Client, Url};
 use serde::{Deserialize};
@@ -60,6 +62,14 @@ impl OllamaModel {
         }
     }
 
+    // Add a helper method to validate model name
+    fn validate_model(&self) -> Result<String, ModelError> {
+        match &self.params.model {
+            Some(model_name) if !model_name.trim().is_empty() => Ok(model_name.clone()),
+            _ => Err(ModelError::ModelNotFound("Model name is not specified or empty".to_string())),
+        }
+    }
+
     fn build_headers(&self) -> HeaderMap {
         let mut headers = HeaderMap::new();
         
@@ -105,6 +115,15 @@ impl OllamaModel {
             let error_text = response.text().await.unwrap_or_else(|_| "Unknown error".to_string());
             let error_msg = format!("Request failed with status {}: {}", status, error_text);
             span.record("error", &error_msg);
+
+            tx.send(Some(ModelEvent::new(
+                &span,
+                ModelEventType::LlmContent(crate::model::types::LLMContentEvent {
+                    content: error_msg.clone(),
+                })
+            ))).await
+                .map_err(|e| ModelError::CustomError(e.to_string()))?;
+
             error!("{}", error_msg);
             return Err(ModelError::RequestFailed(error_msg));
         }
@@ -115,15 +134,6 @@ impl OllamaModel {
             error!("{}", error_msg);
             ModelError::ParsingResponseFailed(error_msg)
         })?;
-
-        // Send the model event with the raw response
-        tx.send(Some(ModelEvent::new(
-            &span,
-            ModelEventType::LlmContent(crate::model::types::LLMContentEvent {
-                content: json.to_string(),
-            })
-        ))).await
-            .map_err(|e| ModelError::CustomError(e.to_string()))?;
 
         Ok(json)
     }
@@ -155,15 +165,15 @@ impl OllamaModel {
         &self,
         response: serde_json::Value,
     ) -> Result<Vec<f32>, ModelError> {
-        #[derive(Deserialize)]
-        struct OllamaEmbeddingResponse {
-            embedding: Vec<f32>,
-        }
-
-        let response_obj = serde_json::from_value::<OllamaEmbeddingResponse>(response)
-            .map_err(|e| ModelError::ParsingResponseFailed(format!("Failed to parse Ollama embedding response: {}", e)))?;
-
-        Ok(response_obj.embedding)
+        // 兼容 OpenAI embedding 返回格式：{"object":"list","data":[{"object":"embedding","embedding":[...],"index":0}],...}
+        let embedding = response
+            .get("data")
+            .and_then(|data| data.get(0))
+            .and_then(|item| item.get("embedding"))
+            .and_then(|emb| emb.as_array())
+            .ok_or_else(|| ModelError::ParsingResponseFailed("Missing data[0].embedding in embedding response".to_string()))?;
+        let embedding_vec: Result<Vec<f32>, _> = embedding.iter().map(|v| v.as_f64().map(|f| f as f32).ok_or(())).collect();
+        embedding_vec.map_err(|_| ModelError::ParsingResponseFailed("Embedding array contains non-float values".to_string()))
     }
 
     async fn parse_image_generation_response(
@@ -203,7 +213,7 @@ impl OllamaModel {
         })
     }
 
-    fn build_chat_request(&self, messages: &[ChatCompletionMessage]) -> serde_json::Value {
+    fn build_chat_request(&self, messages: &[ChatCompletionMessage], model_name: &str) -> serde_json::Value {
         // Format messages for Ollama API format
         let formatted_messages: Vec<serde_json::Value> = messages.iter().map(|msg| {
             let content = match &msg.content {
@@ -219,7 +229,7 @@ impl OllamaModel {
         
         // Build request payload
         let mut request = json!({
-            "model": self.params.model.clone().unwrap_or_default(),
+            "model": model_name,
             "messages": formatted_messages,
             "stream": false,
         });
@@ -252,16 +262,17 @@ impl OllamaModel {
         request
     }
 
-    fn build_embedding_request(&self, input: &str) -> serde_json::Value {
+    fn build_embedding_request(&self, input: &str, model_name: &str) -> serde_json::Value {
+        // Format messages for OpenAI compatible Ollama API format
         json!({
-            "model": self.params.model.clone().unwrap_or_default(),
-            "prompt": input,
+            "input": input,
+            "model": model_name,
         })
     }
 
-    fn build_image_request(&self, prompt: &str) -> serde_json::Value {
+    fn build_image_request(&self, prompt: &str, model_name: &str) -> serde_json::Value {
         json!({
-            "model": self.params.model.clone().unwrap_or_default(),
+            "model": model_name,
             "prompt": prompt,
         })
     }
@@ -276,6 +287,15 @@ impl ModelInstance for OllamaModel {
         previous_messages: Vec<Message>,
         tags: HashMap<String, String>,
     ) -> GatewayResult<ChatCompletionMessage> {
+        // 验证模型名称
+        let model_name = match self.validate_model() {
+            Ok(name) => name,
+            Err(e) => {
+                tracing::error!("Model validation failed: {:?}", e);
+                return Err(e.into());
+            }
+        };
+
         // 仅支持文本消息，转换 Message 为 ChatCompletionMessage
         let messages: Vec<ChatCompletionMessage> = previous_messages.iter().map(|m| {
             ChatCompletionMessage::new_text(
@@ -284,21 +304,18 @@ impl ModelInstance for OllamaModel {
             )
         }).collect();
         
-        // 提取 tenant_id
-        let tenant_id = tags.get("tenant_id").cloned().unwrap_or_else(|| "unknown".to_string());
         // Create a span specifically for this request - using target! pattern from openai.rs
         let input = serde_json::to_string(&messages).unwrap_or_default();
         let span = tracing::info_span!(
             target: target!("chat"),
             "model_call",
             provider = "ollama",
-            model = self.params.model.clone().unwrap_or_default(),
+            model = model_name,
             input = input,
             output = field::Empty,
             error = field::Empty,
             usage = field::Empty,
             tags = crate::events::JsonValue(&serde_json::to_value(tags.clone()).unwrap_or_default()).as_value(),
-            tenant_id = %tenant_id
         );
         
         // Send LlmStart event to properly initialize trace context - use span directly, not current()
@@ -306,7 +323,7 @@ impl ModelInstance for OllamaModel {
             &span,
             ModelEventType::LlmStart(crate::model::types::LLMStartEvent {
                 provider_name: "ollama".to_string(),
-                model_name: self.params.model.clone().unwrap_or_default(),
+                model_name: model_name.clone(),
                 input,
             })
         ))).await
@@ -320,8 +337,8 @@ impl ModelInstance for OllamaModel {
             ModelError::ConfigurationError(err_msg)
         })?;
         
-        let request_body = self.build_chat_request(&messages);
-        
+        let request_body = self.build_chat_request(&messages, &model_name);
+
         // Send request and record the span event with proper trace context - Use .instrument()
         let response = async {
             self.send_request(url, request_body, &tx).await
@@ -359,7 +376,7 @@ impl ModelInstance for OllamaModel {
             &span,
             ModelEventType::LlmStop(crate::model::types::LLMFinishEvent {
                 provider_name: "ollama".to_string(),
-                model_name: self.params.model.clone().unwrap_or_default(),
+                model_name: model_name.clone(),
                 output: message.content.as_ref().and_then(|c| c.as_string()),
                 usage: Some(match usage {
                     Usage::CompletionModelUsage(u) => u,
@@ -382,19 +399,21 @@ impl ModelInstance for OllamaModel {
         previous_messages: Vec<Message>,
         tags: HashMap<String, String>,
     ) -> GatewayResult<()> {
+        // 验证模型名称
+        let model_name = self.validate_model()?;
+        
         // 提取 tenant_id
-        let tenant_id = tags.get("tenant_id").cloned().unwrap_or_else(|| "unknown".to_string());
+        // let tenant_id = tags.get("tenant_id").cloned().unwrap_or_else(|| "unknown".to_string());
         // Create a span specifically for this stream request
         let input = serde_json::to_string(&previous_messages).unwrap_or_default();
         let span = tracing::info_span!(
             target: target!("chat_stream"),
             "model_call_stream",
             provider = "ollama",
-            model = self.params.model.clone().unwrap_or_default(),
+            model = model_name,
             input = input,
             error = field::Empty,
-            tags = crate::events::JsonValue(&serde_json::to_value(tags.clone()).unwrap_or_default()).as_value(),
-            tenant_id = %tenant_id
+            tags = crate::events::JsonValue(&serde_json::to_value(tags.clone()).unwrap_or_default()).as_value()
         );
         
         // Send LlmStart event to properly initialize trace context
@@ -402,7 +421,7 @@ impl ModelInstance for OllamaModel {
             &span,
             ModelEventType::LlmStart(crate::model::types::LLMStartEvent {
                 provider_name: "ollama".to_string(),
-                model_name: self.params.model.clone().unwrap_or_default(),
+                model_name: model_name.clone(),
                 input,
             })
         ))).await
@@ -417,7 +436,7 @@ impl ModelInstance for OllamaModel {
             &span,
             ModelEventType::LlmStop(crate::model::types::LLMFinishEvent {
                 provider_name: "ollama".to_string(),
-                model_name: self.params.model.clone().unwrap_or_default(),
+                model_name: model_name,
                 output: Some(error_msg.to_string()),
                 usage: None,
                 finish_reason: crate::model::types::ModelFinishReason::ContentFilter,
@@ -436,8 +455,68 @@ impl ModelInstance for OllamaModel {
 
     async fn embed(
         &self,
-        _input: EmbeddingInput,
+        input: EmbeddingInput,
     ) -> Result<CreateEmbeddingResponse, ModelError> {
-        unimplemented!("embed not implemented for OllamaModel yet");
+        // 1. validate model
+        let model_name = self.validate_model()?;
+        // 2. 构造 tracing span
+        let input_str = match &input {
+            EmbeddingInput::String(s) => s.clone(),
+            _ => {
+                return Err(ModelError::ParsingResponseFailed(
+                    "Ollama embedding only supports string input".to_string()
+                ));
+            }
+        };
+        let span = tracing::info_span!(
+            target: target!("embed"),
+            "model_embed",
+            provider = "ollama",
+            model = model_name,
+            input = input_str,
+            output = field::Empty,
+            error = field::Empty,
+        );
+        // 3. base_url + /v1/embeddings
+        let base_url = self.get_base_url()?;
+        let url = base_url.join("/v1/embeddings").map_err(|e| {
+            let err_msg = format!("Failed to construct Ollama embedding API URL: {}", e);
+            span.record("error", &err_msg);
+            ModelError::ConfigurationError(err_msg)
+        })?;
+        // 4. 构造 body
+        let body = self.build_embedding_request(&input_str, &model_name);
+        // 5. 发送请求
+        let response = async {
+            // embed 不需要 tx, 传一个 dummy channel
+            let (dummy_tx, _rx) = tokio::sync::mpsc::channel(1);
+            self.send_request(url, body, &dummy_tx).await
+        }
+        .instrument(span.clone())
+        .await?;
+        // 6. 解析 response
+        let embedding = self.parse_embedding_response(response.clone()).await?;
+        // 7. 构造 CreateEmbeddingResponse
+        let data = vec![serde_json::json!({
+            "object": "embedding",
+            "index": 0,
+            "embedding": embedding.clone(),
+        })];
+        // 8. 构造 usage
+        let usage = async_openai::types::EmbeddingUsage {
+            prompt_tokens: embedding.len() as u32,
+            total_tokens: embedding.len() as u32,
+        };
+        // 9. 构造返回值，类型兼容
+        let result = CreateEmbeddingResponse {
+            object: "list".to_string(),
+            data: serde_json::from_value(serde_json::json!(data)).unwrap_or_default(),
+            model: model_name,
+            usage,
+        };
+        // 8. 记录 output
+        let output_str = serde_json::to_string(&result).unwrap_or_default();
+        span.record("output", &output_str);
+        Ok(result)
     }
 }
