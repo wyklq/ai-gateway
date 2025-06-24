@@ -160,6 +160,9 @@ impl CompletionModelDefinition {
             CompletionEngineParams::Ollama { params, .. } => {
                 params.model.clone().unwrap_or_default()
             }
+            CompletionEngineParams::OllamaApi { params, .. } => {
+                params.model.clone().unwrap_or_default()
+            }
         }
     }
 
@@ -171,6 +174,7 @@ impl CompletionModelDefinition {
             CompletionEngineParams::Gemini { .. } => "gemini".to_string(),
             CompletionEngineParams::Proxy { .. } => "langdb_open".to_string(),
             CompletionEngineParams::Ollama { .. } => "ollama".to_string(),
+            CompletionEngineParams::OllamaApi { .. } => "ollama_api".to_string(),
         }
     }
 }
@@ -189,6 +193,7 @@ pub enum EngineType {
     Anthropic,
     Gemini,
     Ollama,
+    OllamaApi,
     AwsLambda,
     LangDBFunctions,
     Routing,
@@ -221,6 +226,7 @@ impl<'de> Deserialize<'de> for EngineType {
                     "anthropic" => Ok(EngineType::Anthropic),
                     "gemini" => Ok(EngineType::Gemini),
                     "ollama" => Ok(EngineType::Ollama),
+                    "ollama_api" => Ok(EngineType::OllamaApi),
                     "awslambda" => Ok(EngineType::AwsLambda),
                     "langdbfunctions" => Ok(EngineType::LangDBFunctions),
                     "routing" => Ok(EngineType::Routing),
@@ -247,6 +253,7 @@ impl Serialize for EngineType {
             EngineType::Anthropic => serializer.serialize_str("anthropic"),
             EngineType::Gemini => serializer.serialize_str("gemini"),
             EngineType::Ollama => serializer.serialize_str("ollama"),
+            EngineType::OllamaApi => serializer.serialize_str("ollama_api"),
             EngineType::AwsLambda => serializer.serialize_str("awslambda"),
             EngineType::LangDBFunctions => serializer.serialize_str("langdbfunctions"),
             EngineType::Routing => serializer.serialize_str("routing"),
@@ -269,6 +276,7 @@ impl Display for EngineType {
             EngineType::Routing => write!(f, "routing"),
             EngineType::Secrets => write!(f, "secrets"),
             EngineType::Ollama => write!(f, "ollama"),
+            EngineType::OllamaApi => write!(f, "ollama_api"),
             EngineType::Proxy(name) => write!(f, "{name}"),
         }
     }
@@ -338,7 +346,8 @@ impl EngineType {
             | (EngineType::Proxy(_), EngineFeature::Completions)
             | (EngineType::Proxy(_), EngineFeature::Embeddings)
             | (EngineType::AwsLambda, EngineFeature::Functions)
-            | (EngineType::LangDBFunctions, EngineFeature::Functions) => true,
+            | (EngineType::LangDBFunctions, EngineFeature::Functions)
+            | (EngineType::OllamaApi, EngineFeature::Completions) => true,
 
             (_, _) => false,
         }
@@ -356,6 +365,7 @@ impl EngineType {
             EngineType::Secrets => &[EngineFeature::Integrations],
             EngineType::Proxy(_) => &[EngineFeature::Completions, EngineFeature::Embeddings],
             EngineType::Ollama => &[EngineFeature::Completions, EngineFeature::Embeddings],
+            EngineType::OllamaApi => &[EngineFeature::Completions],
         }
     }
 }
@@ -390,6 +400,12 @@ pub enum CompletionEngineParams {
         params: OllamaModelParams,
         endpoint: Option<String>,
     },
+    OllamaApi {
+        credentials: Option<ApiKeyCredentials>,
+        execution_options: ExecutionOptions,
+        params: OllamaModelParams,
+        endpoint: Option<String>,
+    },
     Proxy {
         params: OpenAiModelParams,
         execution_options: ExecutionOptions,
@@ -405,6 +421,7 @@ impl CompletionEngineParams {
             Self::Anthropic { .. } => "anthropic",
             Self::Gemini { .. } => "gemini",
             Self::Ollama { .. } => "ollama",
+            Self::OllamaApi { .. } => "ollama_api",
             Self::Proxy { .. } => "proxy",
         }
     }
@@ -421,6 +438,7 @@ impl CompletionEngineParams {
             Self::Anthropic { .. } => "anthropic",
             Self::Gemini { .. } => "gemini",
             Self::Ollama { .. } => "ollama",
+            Self::OllamaApi { .. } => "ollama_api",
             Self::Proxy { .. } => "proxy",
         }
     }
@@ -434,6 +452,7 @@ impl CompletionEngineParams {
             Self::Anthropic { params, .. } => params.model.as_ref().map(|m| m.string.as_str()),
             Self::Gemini { params, .. } => params.model.as_deref(),
             Self::Ollama { params, .. } => params.model.as_deref(),
+            Self::OllamaApi { params, .. } => params.model.as_deref(),
             Self::Proxy { params, .. } => params.model.as_deref(),
         }
     }

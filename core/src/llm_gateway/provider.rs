@@ -211,6 +211,51 @@ impl Provider {
                     endpoint: custom_endpoint,
                 })
             }
+            InferenceModelProvider::OllamaApi => {
+                let mut custom_endpoint = None;
+                let api_key_credentials = credentials.and_then(|cred| match cred {
+                    Credentials::ApiKey(key) => Some(key),
+                    Credentials::ApiKeyWithEndpoint {
+                        api_key: key,
+                        endpoint,
+                    } => {
+                        custom_endpoint = Some(endpoint);
+                        Some(ApiKeyCredentials { api_key: key })
+                    }
+                    _ => None,
+                });
+
+                // Convert response format if it exists
+                let response_format = match &request.response_format {
+                    Some(format) => {
+                        let value = serde_json::to_value(format).ok();
+                        if let Some(val) = value {
+                            if val.get("type") == Some(&serde_json::Value::String("json_object".to_string())) {
+                                Some(OllamaResponseFormat::Json)
+                            } else {
+                                None
+                            }
+                        } else {
+                            None
+                        }
+                    }
+                    None => None,
+                };
+
+                Ok(CompletionEngineParams::OllamaApi {
+                    credentials: api_key_credentials,
+                    execution_options: Default::default(),
+                    params: OllamaModelParams {
+                        model: Some(model.inference_provider.model_name.clone()),
+                        temperature: request.temperature,
+                        top_p: request.top_p,
+                        max_tokens: request.max_tokens.map(|x| x as i32),
+                        stop: request.stop.clone(),
+                        response_format,
+                    },
+                    endpoint: custom_endpoint,
+                })
+            }
         }
     }
 
@@ -263,7 +308,8 @@ impl Provider {
             }
             InferenceModelProvider::Anthropic
             | InferenceModelProvider::Gemini
-            | InferenceModelProvider::Bedrock => Err(GatewayError::CustomError(format!(
+            | InferenceModelProvider::Bedrock
+            | InferenceModelProvider::OllamaApi => Err(GatewayError::CustomError(format!(
                 "Unsupported provider: {}",
                 model.inference_provider.model_name
             ))),
