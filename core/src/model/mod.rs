@@ -69,7 +69,7 @@ pub trait ModelInstance: Sync + Send {
 
     async fn embed(
         &self,
-        input: async_openai::types::EmbeddingInput,
+        _input: async_openai::types::EmbeddingInput,
     ) -> Result<async_openai::types::CreateEmbeddingResponse, ModelError> {
         unimplemented!("embed not implemented for this model");
     }

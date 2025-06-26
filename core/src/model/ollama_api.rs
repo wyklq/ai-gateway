@@ -1,6 +1,5 @@
 use crate::model::error::ModelError;
-use crate::model::types::{LLMContentEvent, LLMFinishEvent, LLMStartEvent,
-    ModelEvent, ModelEventType, ModelFinishReason, ModelToolCall};
+use crate::model::types::{ModelEvent, ModelEventType};
 use crate::model::ModelInstance;
 use crate::types::credentials::ApiKeyCredentials;
 use crate::types::engine::ExecutionOptions;
@@ -44,17 +43,17 @@ struct OllamaApiMessage {
 /// OllamaApiResponse represents the response format from Ollama's native /api/chat API
 #[derive(Debug, Deserialize)]
 struct OllamaApiResponse {
-    model: String,
-    created_at: String,
+    _model: String,
+    _created_at: String,
     message: OllamaApiMessage,
-    done: bool,
-    total_duration: Option<u64>,
-    load_duration: Option<u64>,
+    _done: bool,
+    _total_duration: Option<u64>,
+    _load_duration: Option<u64>,
     prompt_eval_count: Option<u32>,
-    prompt_eval_duration: Option<u64>,
+    _prompt_eval_duration: Option<u64>,
     eval_count: Option<u32>,
-    eval_duration: Option<u64>,
-    done_reason: Option<String>,
+    _eval_duration: Option<u64>,
+    _done_reason: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -85,7 +84,7 @@ impl OllamaApiModel {
             endpoint,
         }
     }
-
+    
     // Add a helper method to validate model name
     fn validate_model(&self) -> Result<String, ModelError> {
         match &self.params.model {
@@ -217,35 +216,56 @@ impl OllamaApiModel {
                 },
                 Some(ChatCompletionContent::Content(contents)) => {
                     // 可能包含图像的多模态内容
+                    // 提取文本内容 - Ollama API 要求 content 字段只是一个纯文本字符串
                     let content = contents.iter().find(|c| c.r#type == crate::types::gateway::ContentType::Text)
                         .and_then(|c| c.text.clone())
                         .unwrap_or_default();
-                    
-                    // 收集所有图像URL - 确保格式符合 Ollama API 要求 (data:image/jpeg;base64,{img})
+                                        
+                    // 收集所有图像URL - 提取为纯 base64 数据（Ollama API 要求 images 数组中只包含 base64 数据，不需要任何前缀）
                     let image_urls: Vec<String> = contents.iter()
                         .filter(|c| c.r#type == crate::types::gateway::ContentType::ImageUrl)
                         .filter_map(|c| c.image_url.as_ref())
-                        .map(|img| {
-                            // 检查URL是否已经是正确的data:格式
-                            let url = img.url.clone();
+                        .filter_map(|img| {
+                            // 检查URL是否已经是正确的data:格式并提取 base64 数据
+                            let url = img.url.clone();                            
                             if url.starts_with("data:image/") && url.contains(";base64,") {
-                                // URL已经是正确的格式, 直接返回 base64, 后面的 base64 数据
-                                url.split(";base64,").last().unwrap_or("").to_string()
+                                // URL是数据URL格式, 提取 base64 部分
+                                match url.split(";base64,").nth(1) {
+                                    Some(base64_data) => {
+                                        if base64_data.is_empty() {
+                                            None
+                                        } else {
+                                            Some(base64_data.to_string())
+                                        }
+                                    },
+                                    None => {
+                                        tracing::warn!(
+                                            target: target!("image"),
+                                            "build_chat_request: Failed to extract base64 data from data URL"
+                                        );
+                                        None
+                                    },
+                                }
                             } else if url.starts_with("http") {
-                                // 警告 - 如果是HTTP URL，Ollama API可能无法处理
+                                // HTTP URL - Ollama 不支持，需要先下载并转换为base64
                                 tracing::warn!(
                                     target: target!("image"),
-                                    "Found HTTP image URL but Ollama API requires base64 format: {}", url
+                                    "build_chat_request: Found HTTP image URL but Ollama API requires base64 format: {}", url
                                 );
-                                "".to_string() // return empty string for HTTP URLs
+                                None // 暂不支持 HTTP 网址
                             } else {
-                                // 假设是纯base64数据，直接返回，ollama api 不需要前缀
-                                url
+                                // 假设是纯base64数据
+                                if url.trim().is_empty() {
+                                    None
+                                } else {
+                                    Some(url)
+                                }
                             }
                         })
                         .collect();
                     
-                    // 如果有图像，则添加到请求中
+                    // 根据 Ollama API 格式构建消息
+                    // content 必须是纯文本，images 是可选的 base64 编码图像数组
                     if !image_urls.is_empty() {
                         json!({
                             "role": msg.role.to_string(),
@@ -253,6 +273,7 @@ impl OllamaApiModel {
                             "images": image_urls
                         })
                     } else {
+                        // 没有图像，只发送文本
                         json!({
                             "role": msg.role.to_string(),
                             "content": content
@@ -323,7 +344,7 @@ impl OllamaApiModel {
 impl ModelInstance for OllamaApiModel {
     async fn invoke(
         &self,
-        input_vars: HashMap<String, Value>,
+        _input_vars: HashMap<String, Value>,
         tx: Sender<Option<ModelEvent>>,
         previous_messages: Vec<Message>,
         tags: HashMap<String, String>,
@@ -341,54 +362,71 @@ impl ModelInstance for OllamaApiModel {
         let messages: Vec<ChatCompletionMessage> = previous_messages.iter().map(|m| {
             // 检查是否有内容数组（可能包含图像）
             if !m.content_array.is_empty() {
-                // 处理多模态内容
                 let mut contents = Vec::new();
-                
-                // 处理文本内容
                 if let Some(text_content) = &m.content {
-                    contents.push(crate::types::gateway::Content {
-                        r#type: crate::types::gateway::ContentType::Text,
-                        text: Some(text_content.clone()),
-                        image_url: None,
-                        audio: None,
-                    });
-                }
-                
-                // 处理图像内容
-                for part in &m.content_array {
-                    if part.r#type == crate::types::threads::MessageContentType::ImageUrl {
-                        // 添加图像URL，确保格式符合 Ollama 要求
-                        let image_url = if part.value.starts_with("data:image/") && part.value.contains(";base64,") {
-                            // 已经是正确的格式
-                            part.value.clone()
-                        } else if part.value.starts_with("http") {
-                            // HTTP URL，但Ollama需要base64格式
-                            tracing::warn!(
-                                target: target!("image"),
-                                "HTTP image URL found but Ollama API requires base64: {}", part.value
-                            );
-                            part.value.clone()
-                        } else {
-                            // 假设是base64数据，需要加上前缀
-                            if !part.value.starts_with("data:") {
-                                format!("data:image/jpeg;base64,{}", part.value)
-                            } else {
-                                part.value.clone()
-                            }
-                        };
-                        
+                    if !text_content.trim().is_empty() {
                         contents.push(crate::types::gateway::Content {
-                            r#type: crate::types::gateway::ContentType::ImageUrl,
-                            text: None,
-                            image_url: Some(crate::types::gateway::ImageUrl {
-                                url: image_url,
-                            }),
+                            r#type: crate::types::gateway::ContentType::Text,
+                            text: Some(text_content.clone()),
+                            image_url: None,
                             audio: None,
                         });
                     }
                 }
-                
-                // 创建包含内容数组的消息
+                for part in &m.content_array {
+                    let type_str = part.r#type.to_string();
+                    if type_str == "text" || type_str == "Text" {
+                        let text = part.value.clone();
+                        if !text.trim().is_empty() {
+                            contents.push(crate::types::gateway::Content {
+                                r#type: crate::types::gateway::ContentType::Text,
+                                text: Some(text),
+                                image_url: None,
+                                audio: None,
+                            });
+                        }
+                    } else if type_str == "image_url" || type_str == "ImageUrl" || type_str == "image" || type_str == "url" {
+                        if part.value.trim().is_empty() {
+                            continue;
+                        }
+                        let raw_value = part.value.clone();
+                        let url: String;
+                        if raw_value.starts_with("{") && raw_value.ends_with("}") {
+                            match serde_json::from_str::<serde_json::Value>(&raw_value) {
+                                Ok(json_value) => {
+                                    let url_value = json_value.get("url")
+                                        .or_else(|| json_value.get("image_url"))
+                                        .and_then(|v| v.as_str());
+                                    if let Some(image_url) = url_value {
+                                        url = image_url.to_string();
+                                    } else {
+                                        continue;
+                                    }
+                                },
+                                Err(_) => {
+                                    url = raw_value;
+                                }
+                            }
+                        } else {
+                            url = raw_value;
+                        }
+                        if !url.trim().is_empty() {
+                            let image_url = if !url.starts_with("data:") && !url.starts_with("http") {
+                                format!("data:image/jpeg;base64,{}", url)
+                            } else {
+                                url
+                            };
+                            contents.push(crate::types::gateway::Content {
+                                r#type: crate::types::gateway::ContentType::ImageUrl,
+                                text: None,
+                                image_url: Some(crate::types::gateway::ImageUrl {
+                                    url: image_url,
+                                }),
+                                audio: None,
+                            });
+                        }
+                    }
+                }
                 ChatCompletionMessage {
                     role: m.r#type.to_string(),
                     content: Some(ChatCompletionContent::Content(contents)),
@@ -397,10 +435,10 @@ impl ModelInstance for OllamaApiModel {
                     refusal: None,
                 }
             } else {
-                // 只有单纯文本内容
+                let text = m.content.clone().unwrap_or_default();
                 ChatCompletionMessage::new_text(
                     m.r#type.to_string(),
-                    m.content.clone().unwrap_or_default(),
+                    text
                 )
             }
         }).collect();
@@ -441,7 +479,7 @@ impl ModelInstance for OllamaApiModel {
         
         // Use the build_chat_request method to create the proper request for the /api/chat endpoint
         let request_body = self.build_chat_request(&messages, &model_name);
-
+        
         // Send request and record the span event with proper trace context
         let response = async {
             self.send_request(url, request_body, &tx).await
@@ -499,7 +537,7 @@ impl ModelInstance for OllamaApiModel {
 
     async fn stream(
         &self,
-        input_vars: HashMap<String, Value>,
+        _input_vars: HashMap<String, Value>,
         tx: Sender<Option<ModelEvent>>,
         previous_messages: Vec<Message>,
         tags: HashMap<String, String>,
@@ -558,7 +596,7 @@ impl ModelInstance for OllamaApiModel {
 
     async fn embed(
         &self,
-        input: EmbeddingInput,
+        _input: EmbeddingInput,
     ) -> Result<CreateEmbeddingResponse, ModelError> {
         // Embedding API is the same in both versions, so we'll just return an error
         Err(ModelError::ParsingResponseFailed(

@@ -309,15 +309,6 @@ pub async fn resolve_model_instance<T: Serialize + DeserializeOwned + Debug + Cl
         db_model: db_model.clone(),
     };
 
-    println!(
-        "Resolved model instance for request: {}, model: {}, endpoint: {}",
-        request.model,
-        llm_model.model,
-        llm_model.inference_provider.endpoint
-            .as_deref()
-            .unwrap_or("None")
-    );
-
     let model_instance = crate::model::init_completion_model_instance(
         completion_model_definition.clone(),
         tools_map,
@@ -354,7 +345,7 @@ pub async fn execute_with_tags<T: Serialize + DeserializeOwned + Debug + Clone>(
     router_span: tracing::Span,
     stream_cache_context: StreamCacheContext,
     basic_cache_context: BasicCacheContext,
-    tags: Option<HashMap<String, String>>,
+    _tags: Option<HashMap<String, String>>,
 ) -> Result<
     Either<
         Result<ChatCompletionStream, GatewayApiError>,

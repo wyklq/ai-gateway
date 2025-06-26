@@ -124,7 +124,7 @@ pub async fn execute_with_tags(
     tags: HashMap<String, String>,
     tx: tokio::sync::mpsc::Sender<Option<ModelEvent>>,
     span: Span,
-    handle: Option<FinishEventHandle>,
+    _handle: Option<FinishEventHandle>,
     input_vars: HashMap<String, serde_json::Value>,
     cache_context: BasicCacheContext,
 ) -> Result<ChatCompletionResponse, GatewayApiError> {

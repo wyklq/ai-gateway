@@ -1,6 +1,5 @@
 use crate::model::error::ModelError;
-use crate::model::types::{LLMContentEvent, LLMFinishEvent, LLMStartEvent,
-    ModelEvent, ModelEventType, ModelFinishReason, ModelToolCall};
+use crate::model::types::{ModelEvent, ModelEventType};
 use crate::model::ModelInstance;
 use crate::types::credentials::ApiKeyCredentials;
 use crate::types::engine::ExecutionOptions;
@@ -10,10 +9,8 @@ use crate::types::gateway::{
 };
 use async_openai::types::{EmbeddingInput, CreateEmbeddingResponse};
 use async_trait::async_trait;
-use aws_config::imds::client::error;
 use reqwest::header::{HeaderMap, HeaderValue};
 use reqwest::{Client, Url};
-use serde::{Deserialize};
 use serde_json::json;
 use tokio::sync::mpsc::Sender;
 use tracing::{error, Span, field};
@@ -180,21 +177,6 @@ impl OllamaModel {
         embedding_vec.map_err(|_| ModelError::ParsingResponseFailed("Embedding array contains non-float values".to_string()))
     }
 
-    async fn parse_image_generation_response(
-        &self,
-        response: serde_json::Value,
-    ) -> Result<Vec<String>, ModelError> {
-        #[derive(Deserialize)]
-        struct OllamaImageResponse {
-            images: Vec<String>,
-        }
-
-        let response_obj = serde_json::from_value::<OllamaImageResponse>(response)
-            .map_err(|e| ModelError::ParsingResponseFailed(format!("Failed to parse Ollama image response: {}", e)))?;
-
-        Ok(response_obj.images)
-    }
-
     fn calculate_usage(&self, prompt_tokens: Option<u32>, completion_tokens: Option<u32>) -> Usage {
         Usage::CompletionModelUsage(CompletionModelUsage {
             input_tokens: prompt_tokens.unwrap_or(0),
@@ -273,20 +255,13 @@ impl OllamaModel {
             "model": model_name,
         })
     }
-
-    fn build_image_request(&self, prompt: &str, model_name: &str) -> serde_json::Value {
-        json!({
-            "model": model_name,
-            "prompt": prompt,
-        })
-    }
 }
 
 #[async_trait]
 impl ModelInstance for OllamaModel {
     async fn invoke(
         &self,
-        input_vars: HashMap<String, Value>,
+        _input_vars: HashMap<String, Value>,
         tx: Sender<Option<ModelEvent>>,
         previous_messages: Vec<Message>,
         tags: HashMap<String, String>,
@@ -398,7 +373,7 @@ impl ModelInstance for OllamaModel {
 
     async fn stream(
         &self,
-        input_vars: HashMap<String, Value>,
+        _input_vars: HashMap<String, Value>,
         tx: Sender<Option<ModelEvent>>,
         previous_messages: Vec<Message>,
         tags: HashMap<String, String>,
