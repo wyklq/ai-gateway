@@ -43,17 +43,17 @@ struct OllamaApiMessage {
 /// OllamaApiResponse represents the response format from Ollama's native /api/chat API
 #[derive(Debug, Deserialize)]
 struct OllamaApiResponse {
-    _model: String,
-    _created_at: String,
+    model: String,
+    created_at: String,
     message: OllamaApiMessage,
-    _done: bool,
-    _total_duration: Option<u64>,
-    _load_duration: Option<u64>,
+    done: bool,
+    total_duration: Option<u64>,
+    load_duration: Option<u64>,
     prompt_eval_count: Option<u32>,
-    _prompt_eval_duration: Option<u64>,
+    prompt_eval_duration: Option<u64>,
     eval_count: Option<u32>,
-    _eval_duration: Option<u64>,
-    _done_reason: Option<String>,
+    eval_duration: Option<u64>,
+    done_reason: Option<String>,
 }
 
 #[derive(Debug, Clone)]
