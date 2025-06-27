@@ -78,7 +78,9 @@ async fn main() -> Result<(), CliError> {
         cli::Commands::Update { force } => {
             tracing::init_tracing();
             println!("Updating models{}...", if force { " (forced)" } else { "" });
-            let models = load_models(true).await?;
+            // No support of force update yet, always load models from a prepared model file
+            // to update it to true after backend api is ready, TODO
+            let models = load_models(false).await?;
             println!("{} Models updated successfully!", models.len());
             Ok(())
         }
