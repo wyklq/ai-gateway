@@ -4,6 +4,7 @@ use opentelemetry::trace::TraceContextExt;
 use serde::{Deserialize, Serialize};
 use tracing::Span;
 use tracing_opentelemetry::OpenTelemetrySpanExt;
+use std::fmt;
 
 use super::CredentialsIdent;
 
@@ -104,6 +105,22 @@ pub enum ModelFinishReason {
     Guardrail,
     Other(String),
 }
+
+// Implement Display for ModelFinishReason
+impl fmt::Display for ModelFinishReason {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            ModelFinishReason::Stop => write!(f, "stop"),
+            ModelFinishReason::StopSequence => write!(f, "stop_sequence"),
+            ModelFinishReason::Length => write!(f, "length"),
+            ModelFinishReason::ToolCalls => write!(f, "tool_calls"),
+            ModelFinishReason::ContentFilter => write!(f, "content_filter"),
+            ModelFinishReason::Guardrail => write!(f, "guardrail"),
+            ModelFinishReason::Other(reason) => write!(f, "{}", reason),
+        }
+    }
+}
+
 #[derive(Debug, Serialize, Deserialize, Clone)]
 
 pub struct ToolStartEvent {

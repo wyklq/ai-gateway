@@ -5,6 +5,8 @@ use crate::model::cached::CachedModel;
 use crate::model::error::ModelError;
 use crate::model::ollama::OllamaModel;
 use crate::model::ollama_api::OllamaApiModel;
+use crate::model::openai::OpenAIModel;
+use crate::model::proxy::OpenAISpecModel;
 use crate::types::engine::{CompletionEngineParams, CompletionModelParams};
 use crate::types::engine::{CompletionModelDefinition, ModelTools, ModelType};
 use crate::types::gateway::{
@@ -31,11 +33,11 @@ use tracing::{info_span, Instrument};
 use types::{ModelEvent, ModelEventType};
 use valuable::Valuable;
 pub mod handler;
-use self::openai::OpenAIModel;
-use crate::model::proxy::OpenAISpecModel;
+
 pub mod anthropic;
 pub mod bedrock;
 pub mod cached;
+pub mod document_adapter;
 pub mod error;
 pub mod gemini;
 pub mod image_generation;

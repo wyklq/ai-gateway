@@ -4,7 +4,7 @@ use super::tools::Tool;
 use super::types::ModelEvent;
 use super::ModelInstance;
 use crate::model::async_trait;
-use crate::model::OpenAIModel;
+use crate::model::openai::OpenAIModel;
 use crate::types::credentials::ApiKeyCredentials;
 use crate::types::engine::ExecutionOptions;
 use crate::types::engine::OpenAiModelParams;

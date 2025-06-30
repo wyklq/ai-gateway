@@ -22,7 +22,7 @@ use crate::GatewayResult;
 use tracing::Instrument;
 use valuable::Valuable;
 
-macro_rules! target! {
+macro_rules! target {
     () => {
         "langdb::user_tracing::models::ollama"
     };
@@ -391,9 +391,10 @@ impl ModelInstance for OllamaModel {
             tags = crate::events::JsonValue(&serde_json::to_value(tags.clone()).unwrap_or_default()).as_value()
         );
 
-        async {
+        let span_clone = span.clone();
+        async move {
             tx.send(Some(ModelEvent::new(
-                &span,
+                &span_clone,
                 ModelEventType::LlmStart(crate::model::types::LLMStartEvent {
                     provider_name: "ollama".to_string(),
                     model_name: model_name.clone(),
@@ -406,7 +407,7 @@ impl ModelInstance for OllamaModel {
             let base_url = self.get_base_url()?;
             let url = base_url.join("/v1/chat/completions").map_err(|e| {
                 let err_msg = format!("Failed to construct Ollama API URL: {}", e);
-                span.record("error", &err_msg);
+                span_clone.record("error", &err_msg);
                 ModelError::ConfigurationError(err_msg)
             })?;
 
@@ -436,7 +437,7 @@ impl ModelInstance for OllamaModel {
                 let status = response.status();
                 let error_text = response.text().await.unwrap_or_else(|_| "Unknown error".to_string());
                 let error_msg = format!("Request failed with status {}: {}", status, error_text);
-                span.record("error", &error_msg);
+                span_clone.record("error", &error_msg);
 
                 let credentials_ident = if self.credentials.is_none() {
                     crate::model::CredentialsIdent::Langdb
@@ -445,7 +446,7 @@ impl ModelInstance for OllamaModel {
                 };
 
                 tx.send(Some(ModelEvent::new(
-                    &span,
+                    &span_clone,
                     ModelEventType::LlmStop(crate::model::types::LLMFinishEvent {
                         provider_name: "ollama".to_string(),
                         model_name: model_name.clone(),
@@ -489,9 +490,9 @@ impl ModelInstance for OllamaModel {
 
                         if !first_token_received {
                             first_token_received = true;
-                            tx.send(Some(ModelEvent::new(
-                                &span,
-                                ModelEventType::LlmFirstToken(
+                tx.send(Some(ModelEvent::new(
+                &span_clone,
+                ModelEventType::LlmFirstToken(
                                     LLMFirstToken {}
                                 ),
                             )))
@@ -506,7 +507,7 @@ impl ModelInstance for OllamaModel {
                                         if !content.is_empty() {
                                             full_content.push_str(content);
                                             tx.send(Some(ModelEvent::new(
-                                                &span,
+                                                &span_clone,
                                                 ModelEventType::LlmContent(
                                                     crate::model::types::LLMContentEvent {
                                                         content: content.to_string(),
@@ -554,7 +555,7 @@ impl ModelInstance for OllamaModel {
             let usage = self.calculate_usage(prompt_tokens, completion_tokens);
 
             tx.send(Some(ModelEvent::new(
-                &span,
+                &span_clone,
                 ModelEventType::LlmStop(crate::model::types::LLMFinishEvent {
                     provider_name: "ollama".to_string(),
                     model_name: model_name.clone(),
@@ -573,7 +574,7 @@ impl ModelInstance for OllamaModel {
 
             Ok(())
         }
-        .instrument(span)
+        .instrument(span.clone())
         .await
     }
 

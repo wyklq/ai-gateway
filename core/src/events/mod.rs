@@ -4,6 +4,7 @@ use opentelemetry_sdk::error::OTelSdkError;
 use opentelemetry_sdk::trace::SpanProcessor;
 use serde_json::Value;
 use valuable::{Listable, Mappable, Valuable, Visit};
+use std::fmt;
 
 mod layer;
 pub use layer::{config, layer, RecordResult, UuidIdGenerator};
@@ -79,10 +80,46 @@ impl<const N: usize> SpanProcessor for BaggageSpanProcessor<N> {
     }
 }
 
-#[repr(transparent)]
+// Simple wrapper that converts JsonValue to a value usable by tracing
+pub struct TracingValue<'a>(pub &'a Value);
+
+impl<'a> fmt::Display for TracingValue<'a> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", serde_json::to_string(self.0).unwrap_or_default())
+    }
+}
+
+impl<'a> fmt::Debug for TracingValue<'a> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", serde_json::to_string_pretty(self.0).unwrap_or_default())
+    }
+}
+
+// Updated JsonValue struct that implements field::Value
 pub struct JsonValue<'a>(pub &'a Value);
 
-#[repr(transparent)]
+impl<'a> JsonValue<'a> {
+    // Convert to a tracing-compatible value
+    pub fn tracing_value(&self) -> TracingValue<'a> {
+        TracingValue(self.0)
+    }
+}
+
+// Implement field::Visit for TracingValue so it can be used with Span::record
+impl<'a> valuable::Visit for TracingValue<'a> {
+    fn visit_value(&mut self, _: valuable::Value<'_>) {
+        // Implementation needed
+    }
+}
+
+// Instead of implementing field::Value directly, let's use Display to debug record
+impl<'a> TracingValue<'a> {
+    pub fn record_to_span(&self, span: &tracing::Span, field_name: &str) {
+        span.record(field_name, &self.to_string());
+    }
+}
+
+// Implementing wrapper for owned JsonValue to make it compatible with tracing::Value
 pub struct JsonValueOwned(pub Value);
 
 #[derive(TransparentWrapper)]

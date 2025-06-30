@@ -2542,6 +2542,7 @@ dependencies = [
  "dashmap",
  "either",
  "futures",
+ "futures-util",
  "indexmap 2.10.0",
  "langdb_clickhouse",
  "langdb_clust",
