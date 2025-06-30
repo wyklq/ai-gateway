@@ -1,5 +1,5 @@
 use crate::model::error::ModelError;
-use crate::model::types::{ModelEvent, ModelEventType};
+use crate::model::types::{LLMFirstToken, ModelEvent, ModelEventType};
 use crate::model::ModelInstance;
 use crate::types::credentials::ApiKeyCredentials;
 use crate::types::engine::ExecutionOptions;
@@ -465,14 +465,20 @@ impl ModelInstance for OllamaModel {
             let mut stream = response.bytes_stream();
             let mut full_content = String::new();
             let mut finish_reason = crate::model::types::ModelFinishReason::Stop;
+            let mut first_token_received = false;
+            let mut done = false;
 
             while let Some(item) = stream.next().await {
+                if done {
+                    break;
+                }
                 let chunk = item.map_err(|e| ModelError::RequestFailed(format!("Stream error: {}", e)))?;
                 let data = String::from_utf8_lossy(&chunk);
                 for line in data.lines() {
                     if line.starts_with("data: ") {
                         let json_str = &line[6..];
                         if json_str.trim() == "[DONE]" {
+                            done = true;
                             break;
                         }
 
@@ -480,6 +486,18 @@ impl ModelInstance for OllamaModel {
                             Ok(v) => v,
                             Err(_) => continue,
                         };
+
+                        if !first_token_received {
+                            first_token_received = true;
+                            tx.send(Some(ModelEvent::new(
+                                &span,
+                                ModelEventType::LlmFirstToken(
+                                    LLMFirstToken {}
+                                ),
+                            )))
+                            .await
+                            .map_err(|e| ModelError::CustomError(e.to_string()))?;
+                        }
 
                         if let Some(choices) = value.get("choices").and_then(|c| c.as_array()) {
                             if let Some(choice) = choices.get(0) {
