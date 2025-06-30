@@ -9,6 +9,7 @@ use crate::types::gateway::{
 };
 use async_openai::types::{EmbeddingInput, CreateEmbeddingResponse};
 use async_trait::async_trait;
+use futures_util::stream::StreamExt;
 use reqwest::header::{HeaderMap, HeaderValue};
 use reqwest::{Client, Url};
 use serde_json::json;
@@ -21,7 +22,7 @@ use crate::GatewayResult;
 use tracing::Instrument;
 use valuable::Valuable;
 
-macro_rules! target {
+macro_rules! target! {
     () => {
         "langdb::user_tracing::models::ollama"
     };
@@ -199,7 +200,7 @@ impl OllamaModel {
         })
     }
 
-    fn build_chat_request(&self, messages: &[ChatCompletionMessage], model_name: &str) -> serde_json::Value {
+    fn build_chat_request(&self, messages: &[ChatCompletionMessage], model_name: &str, stream: bool) -> serde_json::Value {
         // Format messages for Ollama API format
         let formatted_messages: Vec<serde_json::Value> = messages.iter().map(|msg| {
             let content = match &msg.content {
@@ -217,7 +218,7 @@ impl OllamaModel {
         let mut request = json!({
             "model": model_name,
             "messages": formatted_messages,
-            "stream": false,
+            "stream": stream,
         });
         
         // Add optional parameters if specified
@@ -316,7 +317,7 @@ impl ModelInstance for OllamaModel {
             ModelError::ConfigurationError(err_msg)
         })?;
         
-        let request_body = self.build_chat_request(&messages, &model_name);
+        let request_body = self.build_chat_request(&messages, &model_name, false);
 
         // Send request and record the span event with proper trace context - Use .instrument()
         let response = async {
@@ -378,58 +379,184 @@ impl ModelInstance for OllamaModel {
         previous_messages: Vec<Message>,
         tags: HashMap<String, String>,
     ) -> GatewayResult<()> {
-        // 验证模型名称
         let model_name = self.validate_model()?;
-        
-        // 提取 tenant_id
-        // let tenant_id = tags.get("tenant_id").cloned().unwrap_or_else(|| "unknown".to_string());
-        // Create a span specifically for this stream request
         let input = serde_json::to_string(&previous_messages).unwrap_or_default();
         let span = tracing::info_span!(
             target: target!("chat_stream"),
             "model_call_stream",
             provider = "ollama",
-            model = model_name,
+            model = model_name.clone(),
             input = input,
             error = field::Empty,
             tags = crate::events::JsonValue(&serde_json::to_value(tags.clone()).unwrap_or_default()).as_value()
         );
-        
-        // Send LlmStart event to properly initialize trace context
-        tx.send(Some(ModelEvent::new(
-            &span,
-            ModelEventType::LlmStart(crate::model::types::LLMStartEvent {
-                provider_name: "ollama".to_string(),
-                model_name: model_name.clone(),
-                input,
-            })
-        ))).await
-            .map_err(|e| crate::error::GatewayError::CustomError(e.to_string()))?;
-            
-        // For now, streaming is not implemented
-        let error_msg = "Ollama streaming not implemented";
-        span.record("error", &error_msg);
-        
-        // Send LlmStop event with error
-        tx.send(Some(ModelEvent::new(
-            &span,
-            ModelEventType::LlmStop(crate::model::types::LLMFinishEvent {
-                provider_name: "ollama".to_string(),
-                model_name: model_name,
-                output: Some(error_msg.to_string()),
-                usage: None,
-                finish_reason: crate::model::types::ModelFinishReason::ContentFilter,
-                tool_calls: vec![],
-                credentials_ident: if self.credentials.is_none() {
+
+        async {
+            tx.send(Some(ModelEvent::new(
+                &span,
+                ModelEventType::LlmStart(crate::model::types::LLMStartEvent {
+                    provider_name: "ollama".to_string(),
+                    model_name: model_name.clone(),
+                    input: serde_json::to_string(&previous_messages).unwrap_or_default(),
+                }),
+            )))
+            .await
+            .map_err(|e| ModelError::CustomError(e.to_string()))?;
+
+            let base_url = self.get_base_url()?;
+            let url = base_url.join("/v1/chat/completions").map_err(|e| {
+                let err_msg = format!("Failed to construct Ollama API URL: {}", e);
+                span.record("error", &err_msg);
+                ModelError::ConfigurationError(err_msg)
+            })?;
+
+            let messages: Vec<ChatCompletionMessage> = previous_messages
+                .iter()
+                .map(|m| {
+                    ChatCompletionMessage::new_text(
+                        m.r#type.to_string(),
+                        m.content.clone().unwrap_or_default(),
+                    )
+                })
+                .collect();
+
+            let request_body = self.build_chat_request(&messages, &model_name, true);
+            let headers = self.build_headers();
+
+            let response = self
+                .client
+                .post(url)
+                .headers(headers)
+                .json(&request_body)
+                .send()
+                .await
+                .map_err(|e| ModelError::RequestFailed(e.to_string()))?;
+
+            if !response.status().is_success() {
+                let status = response.status();
+                let error_text = response.text().await.unwrap_or_else(|_| "Unknown error".to_string());
+                let error_msg = format!("Request failed with status {}: {}", status, error_text);
+                span.record("error", &error_msg);
+
+                let credentials_ident = if self.credentials.is_none() {
                     crate::model::CredentialsIdent::Langdb
                 } else {
                     crate::model::CredentialsIdent::Own
-                },
-            })
-        ))).await
-            .map_err(|e| crate::error::GatewayError::CustomError(e.to_string()))?;
-            
-        Err(ModelError::RequestFailed(error_msg.to_string()).into())
+                };
+
+                tx.send(Some(ModelEvent::new(
+                    &span,
+                    ModelEventType::LlmStop(crate::model::types::LLMFinishEvent {
+                        provider_name: "ollama".to_string(),
+                        model_name: model_name.clone(),
+                        output: Some(error_msg.clone()),
+                        usage: None,
+                        finish_reason: crate::model::types::ModelFinishReason::ContentFilter,
+                        tool_calls: vec![],
+                        credentials_ident,
+                    }),
+                )))
+                .await
+                .map_err(|e| ModelError::CustomError(e.to_string()))?;
+
+                return Err(ModelError::RequestFailed(error_msg).into());
+            }
+
+            let mut stream = response.bytes_stream();
+            let mut full_content = String::new();
+            let mut finish_reason = crate::model::types::ModelFinishReason::Stop;
+
+            while let Some(item) = stream.next().await {
+                let chunk = item.map_err(|e| ModelError::RequestFailed(format!("Stream error: {}", e)))?;
+                let data = String::from_utf8_lossy(&chunk);
+                for line in data.lines() {
+                    if line.starts_with("data: ") {
+                        let json_str = &line[6..];
+                        if json_str.trim() == "[DONE]" {
+                            break;
+                        }
+
+                        let value: serde_json::Value = match serde_json::from_str(json_str) {
+                            Ok(v) => v,
+                            Err(_) => continue,
+                        };
+
+                        if let Some(choices) = value.get("choices").and_then(|c| c.as_array()) {
+                            if let Some(choice) = choices.get(0) {
+                                if let Some(delta) = choice.get("delta") {
+                                    if let Some(content) = delta.get("content").and_then(|c| c.as_str()) {
+                                        if !content.is_empty() {
+                                            full_content.push_str(content);
+                                            tx.send(Some(ModelEvent::new(
+                                                &span,
+                                                ModelEventType::LlmContent(
+                                                    crate::model::types::LLMContentEvent {
+                                                        content: content.to_string(),
+                                                    },
+                                                ),
+                                            )))
+                                            .await
+                                            .map_err(|e| ModelError::CustomError(e.to_string()))?;
+                                        }
+                                    }
+                                }
+                                if let Some(reason) = choice.get("finish_reason").and_then(|r| r.as_str()) {
+                                    finish_reason = match reason {
+                                        "stop" => crate::model::types::ModelFinishReason::Stop,
+                                        "length" => crate::model::types::ModelFinishReason::Length,
+                                        "content_filter" => crate::model::types::ModelFinishReason::ContentFilter,
+                                        "tool_calls" => crate::model::types::ModelFinishReason::ToolCalls,
+                                        _ => crate::model::types::ModelFinishReason::Stop,
+                                    };
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            let credentials_ident = if self.credentials.is_none() {
+                crate::model::CredentialsIdent::Langdb
+            } else {
+                crate::model::CredentialsIdent::Own
+            };
+
+            let prompt_length: u32 = messages
+                .iter()
+                .map(|m| {
+                    m.content
+                        .as_ref()
+                        .and_then(|c| c.as_string())
+                        .map_or(0, |t| t.len() as u32)
+                })
+                .sum();
+            let completion_length = full_content.len() as u32;
+            let prompt_tokens = Some(prompt_length / 4);
+            let completion_tokens = Some(completion_length / 4);
+            let usage = self.calculate_usage(prompt_tokens, completion_tokens);
+
+            tx.send(Some(ModelEvent::new(
+                &span,
+                ModelEventType::LlmStop(crate::model::types::LLMFinishEvent {
+                    provider_name: "ollama".to_string(),
+                    model_name: model_name.clone(),
+                    output: Some(full_content),
+                    usage: Some(match usage {
+                        Usage::CompletionModelUsage(u) => u,
+                        _ => Default::default(),
+                    }),
+                    finish_reason,
+                    tool_calls: vec![],
+                    credentials_ident,
+                }),
+            )))
+            .await
+            .map_err(|e| ModelError::CustomError(e.to_string()))?;
+
+            Ok(())
+        }
+        .instrument(span)
+        .await
     }
 
     async fn embed(
