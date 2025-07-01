@@ -95,11 +95,19 @@ pub async fn handle_embeddings_invoke(
             // 直接用 OllamaModelParams 构造
             let params = OllamaModelParams {
                 model: Some(llm_model.inference_provider.model_name.clone()),
+                response_format: None,
                 temperature: None,
                 top_p: None,
                 max_tokens: None,
                 stop: None,
-                response_format: None,
+                frequency_penalty: None,
+                presence_penalty: None,
+                seed: None,
+                tools: None,
+                tool_choice: None,
+                logit_bias: None,
+                user: None,
+                n: None,
             };
             Box::new(OllamaEmbed::new(
                 params,

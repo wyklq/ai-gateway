@@ -245,6 +245,32 @@ impl OllamaModel {
                 }
             }
         }
+
+        if let Some(freq) = self.params.frequency_penalty {
+            request["frequency_penalty"] = json!(freq);
+        }
+        if let Some(pres) = self.params.presence_penalty {
+            request["presence_penalty"] = json!(pres);
+        }
+        
+        if let Some(seed) = self.params.seed {
+            request["seed"] = json!(seed);
+        }
+        if let Some(ref tools) = self.params.tools {
+            request["tools"] = json!(tools);
+        }
+        if let Some(ref tool_choice) = self.params.tool_choice {
+            request["tool_choice"] = tool_choice.clone();
+        }
+        if let Some(ref logit_bias) = self.params.logit_bias {
+            request["logit_bias"] = json!(logit_bias);
+        }
+        if let Some(ref user) = self.params.user {
+            request["user"] = json!(user);
+        }
+        if let Some(n) = self.params.n {
+            request["n"] = json!(n);
+        }
         
         request
     }

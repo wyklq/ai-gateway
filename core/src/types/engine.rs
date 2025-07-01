@@ -584,6 +584,14 @@ pub struct OllamaModelParams {
     pub max_tokens: Option<i32>,
     pub stop: Option<Vec<String>>,
     pub response_format: Option<OllamaResponseFormat>,
+    pub frequency_penalty: Option<f32>,
+    pub presence_penalty: Option<f32>,
+    pub seed: Option<i64>,
+    pub tools: Option<Vec<crate::types::gateway::ChatCompletionTool>>,
+    pub tool_choice: Option<serde_json::Value>,
+    pub logit_bias: Option<std::collections::HashMap<String, serde_json::Value>>,
+    pub user: Option<String>,
+    pub n: Option<u32>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, Validate)]
