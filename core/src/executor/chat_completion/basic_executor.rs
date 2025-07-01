@@ -109,7 +109,7 @@ pub async fn execute(
             message: response.clone(),
             finish_reason: Some(finish_reason.clone()),
         }],
-        usage,
+        usage, // <-- 这里写入真实 usage
         is_cache_used,
     };
 

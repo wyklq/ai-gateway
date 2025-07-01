@@ -175,7 +175,8 @@ impl OllamaModel {
             })
         });
 
-        Ok((ChatCompletionMessage::new_text(role, content), usage))
+        let chat_msg = ChatCompletionMessage::new_text(role, content);
+        Ok((chat_msg, usage))
     }
     
     async fn parse_embedding_response(
