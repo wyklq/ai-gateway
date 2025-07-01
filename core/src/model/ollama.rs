@@ -627,10 +627,20 @@ impl ModelInstance for OllamaModel {
             "index": 0,
             "embedding": embedding.clone(),
         })];
-        // 8. 构造 usage
-        let usage = async_openai::types::EmbeddingUsage {
-            prompt_tokens: embedding.len() as u32,
-            total_tokens: embedding.len() as u32,
+        // 8. 构造 usage，优先用后端真实 usage 字段
+        let usage = if let Some(usage_val) = response.get("usage") {
+            // 兼容 OpenAI usage 格式
+            let prompt_tokens = usage_val.get("prompt_tokens").and_then(|v| v.as_u64()).unwrap_or(0) as u32;
+            let total_tokens = usage_val.get("total_tokens").and_then(|v| v.as_u64()).unwrap_or(0) as u32;
+            async_openai::types::EmbeddingUsage {
+                prompt_tokens,
+                total_tokens,
+            }
+        } else {
+            async_openai::types::EmbeddingUsage {
+                prompt_tokens: embedding.len() as u32,
+                total_tokens: embedding.len() as u32,
+            }
         };
         // 9. 构造返回值，类型兼容
         let result = CreateEmbeddingResponse {

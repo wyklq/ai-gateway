@@ -49,7 +49,7 @@ impl OllamaEmbed {
         input: String,
         span: Span,
         tx: Option<&tokio::sync::mpsc::Sender<Option<ModelEvent>>>,
-    ) -> GatewayResult<Vec<f32>> {
+    ) -> GatewayResult<(Vec<f32>, async_openai::types::EmbeddingUsage)> {
         let embedding_input = async_openai::types::EmbeddingInput::String(input);
         let response = self.model.embed(embedding_input).await.map_err(GatewayError::from)?;
         // 这里只取第一个 embedding
@@ -72,7 +72,7 @@ impl OllamaEmbed {
             .await
             .unwrap();
         }
-        Ok(embedding)
+        Ok((embedding, response.usage))
     }
 }
 
@@ -91,7 +91,7 @@ impl Embed for OllamaEmbed {
             }
         };
         let call_span = tracing::info_span!("embedding_ollama", input = &input);
-        let embedding = self.execute(input, call_span.clone(), tx.as_ref()).await?;
+        let (embedding, usage) = self.execute(input, call_span.clone(), tx.as_ref()).await?;
         let model_name = self.model.get_model_name();
         // Ollama 只返回一个 embedding
         let data = vec![EmbeddingData {
@@ -104,8 +104,8 @@ impl Embed for OllamaEmbed {
             data,
             model: model_name,
             usage: EmbeddingUsage {
-                prompt_tokens: 0,
-                total_tokens: 0,
+                prompt_tokens: usage.prompt_tokens,
+                total_tokens: usage.total_tokens,
             },
         })
     }
@@ -127,7 +127,7 @@ impl Embed for OllamaEmbed {
                     // Ollama 暂不支持批量，逐个处理
                     let mut result = Vec::new();
                     for text in chunk_text {
-                        let embedding = self.execute(text, span.clone(), None).await?;
+                        let (embedding, _) = self.execute(text, span.clone(), None).await?;
                         result.push(embedding);
                     }
                     Ok((result, values))
