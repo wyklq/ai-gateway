@@ -143,7 +143,7 @@ impl OllamaModel {
     async fn parse_chat_completion_response(
         &self,
         response: serde_json::Value,
-    ) -> Result<ChatCompletionMessage, ModelError> {
+    ) -> Result<(ChatCompletionMessage, Option<CompletionModelUsage>), ModelError> {
         // 适配 OpenAI 风格的返回格式
         let message = response
             .get("choices")
@@ -160,7 +160,22 @@ impl OllamaModel {
             .unwrap_or("")
             .to_string();
 
-        Ok(ChatCompletionMessage::new_text(role, content))
+        // 解析 usage 字段
+        let usage = response.get("usage").and_then(|usage_val| {
+            let prompt_tokens = usage_val.get("prompt_tokens").and_then(|v| v.as_u64()).unwrap_or(0) as u32;
+            let completion_tokens = usage_val.get("completion_tokens").and_then(|v| v.as_u64()).unwrap_or(0) as u32;
+            let total_tokens = usage_val.get("total_tokens").and_then(|v| v.as_u64()).unwrap_or(0) as u32;
+            Some(CompletionModelUsage {
+                input_tokens: prompt_tokens,
+                output_tokens: completion_tokens,
+                total_tokens,
+                prompt_tokens_details: None,
+                completion_tokens_details: None,
+                is_cache_used: false,
+            })
+        });
+
+        Ok((ChatCompletionMessage::new_text(role, content), usage))
     }
     
     async fn parse_embedding_response(
@@ -351,19 +366,24 @@ impl ModelInstance for OllamaModel {
         }
         .instrument(span.clone())
         .await?;
-        let message = self.parse_chat_completion_response(response.clone()).await?;
+        let (message, usage_from_response) = self.parse_chat_completion_response(response.clone()).await?;
         
         // Record the response in the span
         let output_str = serde_json::to_string(&message).unwrap_or_default();
         span.record("output", &output_str);
         
-        let prompt_length: u32 = messages.iter().map(|m| {
-            m.content.as_ref().and_then(|c| c.as_string()).map_or(0, |t| t.len() as u32)
-        }).sum();
-        let completion_length = message.content.as_ref().and_then(|c| c.as_string()).map_or(0, |t| t.len() as u32);
-        let prompt_tokens = Some(prompt_length / 4);
-        let completion_tokens = Some(completion_length / 4);
-        let usage = self.calculate_usage(prompt_tokens, completion_tokens);
+        // 优先用 response usage 字段，没有则 fallback 到估算
+        let usage = if let Some(u) = usage_from_response {
+            Usage::CompletionModelUsage(u)
+        } else {
+            let prompt_length: u32 = messages.iter().map(|m| {
+                m.content.as_ref().and_then(|c| c.as_string()).map_or(0, |t| t.len() as u32)
+            }).sum();
+            let completion_length = message.content.as_ref().and_then(|c| c.as_string()).map_or(0, |t| t.len() as u32);
+            let prompt_tokens = Some(prompt_length / 4);
+            let completion_tokens = Some(completion_length / 4);
+            self.calculate_usage(prompt_tokens, completion_tokens)
+        };
         
         // Update usage in span with proper format (matching openai.rs)
         if let Usage::CompletionModelUsage(ref u) = usage {
