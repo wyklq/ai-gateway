@@ -65,7 +65,7 @@ pub async fn handle_embeddings_invoke(
                     model_type: ModelType::Embedding,
                     response_schema: None,
                     credentials: None,
-                },
+                }.into(),
             ));
         }
     });
