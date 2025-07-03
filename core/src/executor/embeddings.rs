@@ -14,7 +14,7 @@ use tracing::Span;
 use crate::types::embed::OpenAiEmbeddingParams;
 use crate::types::{
     engine::{Model, ModelTools, ModelType, OllamaModelParams},
-    gateway::{CreateEmbeddingRequest, CreateEmbeddingResponse},
+    gateway::{CreateEmbeddingRequest, Input, CreateEmbeddingResponse},
 };
 use tracing_futures::Instrument;
 

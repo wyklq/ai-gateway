@@ -281,13 +281,6 @@ pub async fn resolve_model_instance<T: Serialize + DeserializeOwned + Debug + Cl
 
     let request = request.request.clone();
 
-    let execution_options = extra
-        .as_ref()
-        .map(|e| e.max_retries)
-        .map(|retries| ExecutionOptions {
-            max_retries: retries,
-        })
-        .unwrap_or_default();
     let engine = Provider::get_completion_engine_for_model(
         &llm_model,
         &request,
@@ -302,7 +295,6 @@ pub async fn resolve_model_instance<T: Serialize + DeserializeOwned + Debug + Cl
         provider_name: llm_model.inference_provider.provider.to_string(),
         prompt_name: None,
         model_params: HashMap::new(),
-        execution_options,
         tools: tools.clone(),
         model_type: ModelType::Completions,
         response_schema: None,
