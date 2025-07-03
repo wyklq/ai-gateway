@@ -434,14 +434,14 @@ impl BedrockModel {
             });
             let span = tracing::info_span!(
                 target: target!("chat"),
-                SPAN_BEDROCK,
-                ttft = field::Empty,
-                output = field::Empty,
-                error = field::Empty,
-                usage = field::Empty,
-                cost = field::Empty,
-                input = JsonValue(&input).as_value(),
-                tags = JsonValue(&serde_json::to_value(tags.clone()).unwrap_or_default()).as_value(),
+                 SPAN_BEDROCK,
+                  ttft = field::Empty,
+                   output = field::Empty,
+                    error = field::Empty,
+                     usage = field::Empty,
+                      cost = field::Empty,
+                      input = JsonValue(&input).as_value(),
+                      tags = JsonValue(&serde_json::to_value(tags.clone()).unwrap_or_default()).as_value(),
                 retries_left = retries
             );
 
@@ -460,8 +460,6 @@ impl BedrockModel {
                     span.record("error", e.to_string());
                     if retries == 0 {
                         return Err(e);
-                    } else {
-                        calls.push(input_messages);
                     }
                 }
             }
@@ -838,14 +836,14 @@ impl BedrockModel {
             });
             let span = tracing::info_span!(
                 target: target!("chat"),
-                SPAN_BEDROCK,
-                ttft = field::Empty,
-                output = field::Empty,
-                error = field::Empty,
-                usage = field::Empty,
-                cost = field::Empty,
-                input = JsonValue(&input).as_value(),
-                tags = JsonValue(&serde_json::to_value(tags.clone()).unwrap_or_default()).as_value(),
+                 SPAN_BEDROCK,
+                  ttft = field::Empty,
+                   output = field::Empty,
+                    error = field::Empty,
+                     usage = field::Empty,
+                      cost = field::Empty,
+                      input = JsonValue(&input).as_value(),
+                      tags = JsonValue(&serde_json::to_value(tags.clone()).unwrap_or_default()).as_value(),
                 retries_left = retries
             );
 
@@ -871,8 +869,6 @@ impl BedrockModel {
                     span.record("error", e.to_string());
                     if retries == 0 {
                         return Err(e);
-                    } else {
-                        calls.push(input_messages);
                     }
                 }
             }

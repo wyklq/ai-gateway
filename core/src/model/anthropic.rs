@@ -52,6 +52,11 @@ enum InnerExecutionResult {
     NextCall((Option<SystemPrompt>, Vec<ClustMessage>)),
 }
 
+enum InnerExecutionResult {
+    Finish(ChatCompletionMessage),
+    NextCall((Option<SystemPrompt>, Vec<ClustMessage>)),
+}
+
 fn custom_err(e: impl ToString) -> ModelError {
     ModelError::CustomError(e.to_string())
 }
@@ -625,7 +630,7 @@ impl AnthropicModel {
                 return Err(ModelError::SystemPromptMissing.into());
             };
             let request = self
-                .build_request(system_prompt.clone(), input_messages.clone(), false)
+                .build_request(system_prompt.clone(), input_messages, false)
                 .map_err(custom_err)?;
 
             call_span.record("system_prompt", format!("{system_prompt}"));
@@ -643,8 +648,6 @@ impl AnthropicModel {
                     call_span.record("error", e.to_string());
                     if retries == 0 {
                         return Err(e);
-                    } else {
-                        calls.push((Some(system_prompt), input_messages));
                     }
                 }
             }
@@ -684,7 +687,7 @@ impl AnthropicModel {
                 return Err(ModelError::SystemPromptMissing.into());
             };
             let request = self
-                .build_request(system_prompt.clone(), input_messages.clone(), true)
+                .build_request(system_prompt.clone(), input_messages, true)
                 .map_err(custom_err)?;
 
             call_span.record("system_prompt", format!("{system_prompt}"));
@@ -702,8 +705,6 @@ impl AnthropicModel {
                     call_span.record("error", e.to_string());
                     if retries == 0 {
                         return Err(e);
-                    } else {
-                        calls.push((Some(system_prompt), input_messages));
                     }
                 }
             }
