@@ -12,9 +12,9 @@ use actix_web::HttpRequest;
 use tracing::Span;
 
 use crate::types::embed::OpenAiEmbeddingParams;
-use crate::types::gateway::{CreateEmbeddingRequest, CreateEmbeddingResponse};
 use crate::types::{
-    engine::{ExecutionOptions, Model, ModelTools, ModelType, OllamaModelParams},
+    engine::{Model, ModelTools, ModelType, OllamaModelParams},
+    gateway::{CreateEmbeddingRequest, CreateEmbeddingResponse},
 };
 use tracing_futures::Instrument;
 
@@ -60,7 +60,6 @@ pub async fn handle_embeddings_invoke(
                     provider_name: provider_name.clone(),
                     prompt_name: None,
                     model_params: HashMap::new(),
-                    execution_options: ExecutionOptions::default(),
                     tools: ModelTools(vec![]),
                     model_type: ModelType::Embedding,
                     response_schema: None,
