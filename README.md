@@ -114,7 +114,7 @@ LangDB AI Gateway currently supports the following LLM providers. Find all [the 
 | <img src="https://raw.githubusercontent.com/langdb/ai-gateway/main/assets/images/meta.png" width="32">            | Meta ( Provided by Bedrock )    |
 | <img src="https://raw.githubusercontent.com/langdb/ai-gateway/main/assets/images/cohere.png" width="32">          | Cohere ( Provided by Bedrock )  |
 | <img src="https://raw.githubusercontent.com/langdb/ai-gateway/main/assets/images/mistral.png" width="32">         | Mistral ( Provided by Bedrock ) |
-| <img src="https://raw.githubusercontent.com/langdb/ai-gateway/main/assets/images/ollama.png" width="32">         | Ollama ( Open Source models )   |
+| <img src="https://raw.githubusercontent.com/wyklq/ai-gateway/main/assets/images/ollama.png" width="32">         | Ollama ( Open Source models )   |
 
 ## API Endpoints
 
