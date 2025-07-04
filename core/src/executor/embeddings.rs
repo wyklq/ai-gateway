@@ -43,7 +43,7 @@ pub async fn handle_embeddings_invoke(
         dimensions: request.dimensions,
     };
 
-    let (tx, mut rx) = tokio::sync::mpsc::channel::<Option<ModelEvent>>(1000);
+    let (tx, mut rx) = tokio::sync::mpsc::channel::<Option<ModelEvent>>(4096);
     let model_name = llm_model.model.clone();
 
     let callback_handler = callback_handler.clone();

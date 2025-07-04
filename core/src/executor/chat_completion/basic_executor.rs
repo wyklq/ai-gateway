@@ -45,7 +45,7 @@ pub async fn execute(
     input_vars: HashMap<String, serde_json::Value>,
     cache_context: BasicCacheContext,
 ) -> Result<ChatCompletionResponse, GatewayApiError> {
-    let (inner_tx, mut rx) = tokio::sync::mpsc::channel::<Option<ModelEvent>>(100);
+    let (inner_tx, mut rx) = tokio::sync::mpsc::channel::<Option<ModelEvent>>(4096);
 
     // Create a channel for capturing LLMFinishEvent if none is provided
     let (finish_tx, finish_rx) = tokio::sync::oneshot::channel();
@@ -65,7 +65,7 @@ pub async fn execute(
             if let Some(sender) = &cache_context.events_sender {
                 sender.send(event.clone()).await.unwrap();
             }
-            tx.send(event).await.unwrap();
+            let _ = tx.try_send(event);
         }
 
         // Send the captured finish event
@@ -151,7 +151,7 @@ pub async fn execute_with_tags(
     input_vars: HashMap<String, serde_json::Value>,
     cache_context: BasicCacheContext,
 ) -> Result<ChatCompletionResponse, GatewayApiError> {
-    let (inner_tx, mut rx) = tokio::sync::mpsc::channel::<Option<ModelEvent>>(100);
+    let (inner_tx, mut rx) = tokio::sync::mpsc::channel::<Option<ModelEvent>>(4096);
     
     // Create a channel for capturing LLMFinishEvent if none is provided
     let (finish_tx, finish_rx) = tokio::sync::oneshot::channel();
@@ -170,7 +170,7 @@ pub async fn execute_with_tags(
             if let Some(sender) = &cache_context.events_sender {
                 sender.send(event.clone()).await.unwrap();
             }
-            tx.send(event).await.unwrap();
+            let _ = tx.try_send(event);
         }
         
         // Send the captured finish event
