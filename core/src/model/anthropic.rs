@@ -623,7 +623,8 @@ impl AnthropicModel {
                 usage = field::Empty,
                 tags = JsonValue(&serde_json::to_value(tags.clone()).unwrap_or_default()).as_value(),
                 system_prompt = field::Empty,
-                retries_left = retries
+                retries_left = retries,
+                request = field::Empty
             );
 
             let Some(system_prompt) = system_message else {
@@ -632,7 +633,10 @@ impl AnthropicModel {
             let request = self
                 .build_request(system_prompt.clone(), input_messages.clone(), false)
                 .map_err(custom_err)?;
-
+            call_span.record(
+                "request",
+                serde_json::to_string(&request).unwrap_or_default(),
+            );
             call_span.record("system_prompt", format!("{system_prompt}"));
 
             match self
@@ -682,7 +686,8 @@ impl AnthropicModel {
                 usage = field::Empty,
                 tags = JsonValue(&serde_json::to_value(tags.clone()).unwrap_or_default()).as_value(),
                 system_prompt = field::Empty,
-                retries_left = retries
+                retries_left = retries,
+                request = field::Empty
             );
 
             let Some(system_prompt) = system_message else {
@@ -691,7 +696,10 @@ impl AnthropicModel {
             let request = self
                 .build_request(system_prompt.clone(), input_messages.clone(), true)
                 .map_err(custom_err)?;
-
+            call_span.record(
+                "request",
+                serde_json::to_string(&request).unwrap_or_default(),
+            );
             call_span.record("system_prompt", format!("{system_prompt}"));
 
             match self
