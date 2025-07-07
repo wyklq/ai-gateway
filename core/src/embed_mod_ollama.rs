@@ -83,31 +83,52 @@ impl Embed for OllamaEmbed {
         input_text: Input,
         tx: Option<tokio::sync::mpsc::Sender<Option<ModelEvent>>>,
     ) -> GatewayResult<GatewayEmbeddingResponse> {
-        let input = match input_text {
-            Input::String(s) => s,
-            Input::Array(arr) => {
-                // Ollama 暂不支持批量，取第一个
-                arr.into_iter().next().ok_or_else(|| GatewayError::CustomError("Ollama embedding only supports String input".to_string()))?
-            }
-        };
-        let call_span = tracing::info_span!("embedding_ollama", input = &input);
-        let (embedding, usage) = self.execute(input, call_span.clone(), tx.as_ref()).await?;
         let model_name = self.model.get_model_name();
-        // Ollama 只返回一个 embedding
-        let data = vec![EmbeddingData {
-            object: "embedding".to_string(),
-            embedding,
-            index: 0,
-        }];
-        Ok(GatewayEmbeddingResponse {
-            object: "list".to_string(),
-            data,
-            model: model_name,
-            usage: EmbeddingUsage {
-                prompt_tokens: usage.prompt_tokens,
-                total_tokens: usage.total_tokens,
-            },
-        })
+        match input_text {
+            Input::String(s) => {
+                let call_span = tracing::info_span!("embedding_ollama", input = &s);
+                let (embedding, usage) = self.execute(s, call_span.clone(), tx.as_ref()).await?;
+                let data = vec![EmbeddingData {
+                    object: "embedding".to_string(),
+                    embedding,
+                    index: 0,
+                }];
+                Ok(GatewayEmbeddingResponse {
+                    object: "list".to_string(),
+                    data,
+                    model: model_name,
+                    usage: EmbeddingUsage {
+                        prompt_tokens: usage.prompt_tokens,
+                        total_tokens: usage.total_tokens,
+                    },
+                })
+            }
+            Input::Array(arr) => {
+                let mut data = Vec::with_capacity(arr.len());
+                let mut total_prompt_tokens = 0;
+                let mut total_tokens = 0;
+                for (idx, s) in arr.into_iter().enumerate() {
+                    let call_span = tracing::info_span!("embedding_ollama", input = &s);
+                    let (embedding, usage) = self.execute(s, call_span.clone(), tx.as_ref()).await?;
+                    total_prompt_tokens += usage.prompt_tokens;
+                    total_tokens += usage.total_tokens;
+                    data.push(EmbeddingData {
+                        object: "embedding".to_string(),
+                        embedding,
+                        index: idx as u32,
+                    });
+                }
+                Ok(GatewayEmbeddingResponse {
+                    object: "list".to_string(),
+                    data,
+                    model: model_name,
+                    usage: EmbeddingUsage {
+                        prompt_tokens: total_prompt_tokens,
+                        total_tokens,
+                    },
+                })
+            }
+        }
     }
 
     async fn batched_invoke(
