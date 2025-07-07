@@ -134,9 +134,8 @@ pub enum ModelFinishReason {
     Other(String),
 }
 
-// Implement Display for ModelFinishReason
-impl fmt::Display for ModelFinishReason {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+impl std::fmt::Display for ModelFinishReason {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             ModelFinishReason::Stop => write!(f, "stop"),
             ModelFinishReason::StopSequence => write!(f, "stop_sequence"),
@@ -144,13 +143,12 @@ impl fmt::Display for ModelFinishReason {
             ModelFinishReason::ToolCalls => write!(f, "tool_calls"),
             ModelFinishReason::ContentFilter => write!(f, "content_filter"),
             ModelFinishReason::Guardrail => write!(f, "guardrail"),
-            ModelFinishReason::Other(reason) => write!(f, "{}", reason),
+            ModelFinishReason::Other(s) => write!(f, "{s}"),
         }
     }
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
-
 pub struct ToolStartEvent {
     pub tool_id: String,
     pub tool_name: String,
@@ -158,7 +156,6 @@ pub struct ToolStartEvent {
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
-
 pub struct ToolResultEvent {
     pub tool_id: String,
     pub tool_name: String,
