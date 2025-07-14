@@ -33,6 +33,7 @@ impl OllamaEmbed {
             Default::default(),
             credentials.cloned(),
             endpoint.map(|s| s.to_string()),
+            Some(2) // Default max retries set to 2
         );
         let credentials_ident = credentials
             .map(|_c| CredentialsIdent::Own)

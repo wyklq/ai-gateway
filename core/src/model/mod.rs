@@ -280,6 +280,7 @@ pub async fn init_completion_model_instance(
                 execution_options.clone(),
                 credentials.clone(),
                 endpoint.map(|s| s.to_string()),
+                Some(2),
             ),
             definition,
             executor_context: executor_context.clone(),

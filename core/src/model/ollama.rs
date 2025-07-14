@@ -38,6 +38,7 @@ pub struct OllamaModel {
     pub execution_options: ExecutionOptions,
     pub params: OllamaModelParams,
     pub endpoint: Option<String>,
+    pub max_retries: Option<u32>,
 }
 
 impl OllamaModel {
@@ -46,17 +47,17 @@ impl OllamaModel {
         execution_options: ExecutionOptions,
         credentials: Option<ApiKeyCredentials>,
         endpoint: Option<String>,
+        max_retries: Option<u32>,
     ) -> Self {
         let client = Client::new();
-
         tracing::debug!(target: "ollama_debug", "[OllamaModel::new] endpoint = {:?}", endpoint);
-
         Self {
             client,
             credentials,
             execution_options,
             params,
             endpoint,
+            max_retries,
         }
     }
 
@@ -465,42 +466,65 @@ impl ModelInstance for OllamaModel {
             let request_body = self.build_chat_request(&messages, &model_name, true);
             let headers = self.build_headers();
 
-            let response = self
-                .client
-                .post(url)
-                .headers(headers)
-                .json(&request_body)
-                .send()
-                .await
-                .map_err(|e| ModelError::RequestFailed(e.to_string()))?;
-
-            if !response.status().is_success() {
-                let status = response.status();
-                let error_text = response.text().await.unwrap_or_else(|_| "Unknown error".to_string());
-                let error_msg = format!("Request failed with status {}: {}", status, error_text);
-                span_clone.record("error", &error_msg);
-
-                let credentials_ident = if self.credentials.is_none() {
-                    crate::model::CredentialsIdent::Langdb
-                } else {
-                    crate::model::CredentialsIdent::Own
-                };
-
-                let _ = tx.try_send(Some(ModelEvent::new(
-                    &span_clone,
-                    ModelEventType::LlmStop(crate::model::types::LLMFinishEvent {
-                        provider_name: "ollama".to_string(),
-                        model_name: model_name.clone(),
-                        output: Some(error_msg.clone()),
-                        usage: None,
-                        finish_reason: crate::model::types::ModelFinishReason::ContentFilter,
-                        tool_calls: vec![],
-                        credentials_ident,
-                    }),
-                )));
-
-                return Err(ModelError::RequestFailed(error_msg).into());
-            }
+            let mut retries_left = self.max_retries.unwrap_or(crate::model::DEFAULT_MAX_RETRIES);
+            let response = loop {
+                let resp_result = self
+                    .client
+                    .post(url.clone())
+                    .headers(headers.clone())
+                    .json(&request_body)
+                    .send()
+                    .await;
+                match resp_result {
+                    Ok(response) => {
+                        if response.status().is_success() {
+                            break response;
+                        } else {
+                            let status = response.status();
+                            let error_text = response.text().await.unwrap_or_else(|_| "Unknown error".to_string());
+                            let error_msg = format!("Request failed with status {}: {}", status, error_text);
+                            span_clone.record("error", &error_msg);
+                            let should_retry = status.is_server_error() || status == 429;
+                            if !should_retry || retries_left == 0 {
+                                let credentials_ident = if self.credentials.is_none() {
+                                    crate::model::CredentialsIdent::Langdb
+                                } else {
+                                    crate::model::CredentialsIdent::Own
+                                };
+                                let _ = tx.try_send(Some(ModelEvent::new(
+                                    &span_clone,
+                                    ModelEventType::LlmStop(crate::model::types::LLMFinishEvent {
+                                        provider_name: "ollama".to_string(),
+                                        model_name: model_name.clone(),
+                                        output: Some(error_msg.clone()),
+                                        usage: None,
+                                        finish_reason: crate::model::types::ModelFinishReason::ContentFilter,
+                                        tool_calls: vec![],
+                                        credentials_ident,
+                                    }),
+                                )));
+                                return Err(ModelError::RequestFailed(error_msg).into());
+                            }
+                            retries_left -= 1;
+                            tokio::time::sleep(tokio::time::Duration::from_millis(
+                                1000 * (self.max_retries.unwrap_or(crate::model::DEFAULT_MAX_RETRIES) - retries_left) as u64
+                            )).await;
+                            continue;
+                        }
+                    },
+                    Err(e) => {
+                        let error_msg = format!("Failed to send streaming request: {}", e);
+                        span_clone.record("error", &error_msg);
+                        if retries_left == 0 {
+                            return Err(ModelError::RequestFailed(error_msg).into());
+                        }
+                        retries_left -= 1;
+                        tokio::time::sleep(tokio::time::Duration::from_millis(
+                            1000 * (self.max_retries.unwrap_or(crate::model::DEFAULT_MAX_RETRIES) - retries_left) as u64
+                        )).await;
+                    }
+                }
+            };
 
             let mut stream = response.bytes_stream();
             let mut full_content = String::new();
@@ -607,7 +631,7 @@ impl ModelInstance for OllamaModel {
 
             Ok(())
         }
-        .instrument(span.clone())
+        .instrument(span.clone().or_current())
         .await
     }
 
