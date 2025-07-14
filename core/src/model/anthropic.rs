@@ -46,12 +46,6 @@ macro_rules! target {
         concat!("langdb::user_tracing::models::anthropic::", $subtgt)
     };
 }
-
-enum InnerExecutionResult {
-    Finish(ChatCompletionMessage),
-    NextCall((Option<SystemPrompt>, Vec<ClustMessage>)),
-}
-
 enum InnerExecutionResult {
     Finish(ChatCompletionMessage),
     NextCall((Option<SystemPrompt>, Vec<ClustMessage>)),
