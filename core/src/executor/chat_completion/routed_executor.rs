@@ -1,6 +1,7 @@
 use crate::executor::chat_completion::basic_executor::BasicCacheContext;
 use crate::executor::context::ExecutorContext;
 use crate::handler::chat::map_sso_event;
+use crate::routing::metrics::InMemoryMetricsRepository;
 use crate::routing::RoutingStrategy;
 use crate::usage::InMemoryStorage;
 use std::collections::BTreeMap;
@@ -22,7 +23,6 @@ use crate::executor::chat_completion::StreamCacheContext;
 use thiserror::Error;
 
 use opentelemetry::trace::TraceContextExt as _;
-use tokio::sync::broadcast;
 use tokio::sync::Mutex;
 use tracing::Span;
 use tracing_futures::Instrument;
@@ -31,7 +31,7 @@ use tracing_opentelemetry::OpenTelemetrySpanExt as _;
 use crate::handler::find_model_by_full_name;
 
 use crate::routing::LlmRouter;
-use crate::telemetry::{trace_id_uuid, TraceMap};
+use crate::telemetry::trace_id_uuid;
 use crate::GatewayApiError;
 
 use crate::events::JsonValue;
@@ -39,13 +39,15 @@ use crate::events::SPAN_REQUEST_ROUTING;
 use tracing::field;
 use valuable::Valuable;
 
+const MAX_DEPTH: usize = 10;
+
 #[derive(Error, Debug)]
 pub enum RoutedExecutorError {
-    #[error("Failed deserializing request to json: {0}")]
-    FailedToDeserializeRequestResult(#[from] serde_json::Error),
+    #[error("Failed serializing request to json: {0}")]
+    FailedToSerializeRequestResult(serde_json::Error),
 
-    #[error("Failed serializing merged request with target: {0}")]
-    FailedToSerializeMergedRequestResult(serde_json::Error),
+    #[error("Failed deserializing merged request with target: {0}")]
+    FailedToDeserializeMergedRequestResult(serde_json::Error),
 }
 
 pub struct RoutedExecutor {
@@ -60,14 +62,21 @@ impl RoutedExecutor {
     pub async fn execute(
         &self,
         executor_context: &ExecutorContext,
-        traces: &TraceMap,
         memory_storage: Option<Arc<Mutex<InMemoryStorage>>>,
     ) -> Result<HttpResponse, GatewayApiError> {
         let span = Span::current();
 
         let mut targets = vec![(self.request.clone(), None)];
 
+        let mut depth = 0;
         while let Some((mut request, target)) = targets.pop() {
+            depth += 1;
+            if depth > MAX_DEPTH {
+                return Err(GatewayApiError::GatewayError(GatewayError::CustomError(
+                    "Max depth reached".to_string(),
+                )));
+            }
+
             if let Some(t) = target {
                 request.router = None;
                 request = Self::merge_request_with_target(&request, &t)?;
@@ -106,12 +115,15 @@ impl RoutedExecutor {
                     None => BTreeMap::new(),
                 };
 
+                // Create metrics repository from the fetched metrics
+                let metrics_repository = InMemoryMetricsRepository::new(metrics);
+
                 let executor_result = llm_router
                     .route(
                         request.request.clone(),
                         &executor_context.provided_models,
                         executor_context.headers.clone(),
-                        metrics,
+                        &metrics_repository,
                     )
                     .instrument(span.clone())
                     .await;
@@ -127,7 +139,7 @@ impl RoutedExecutor {
                     }
                 }
             } else {
-                let result = Self::execute_request(&request, executor_context, traces).await;
+                let result = Self::execute_request(&request, executor_context).await;
 
                 match result {
                     Ok(response) => return Ok(response),
@@ -151,7 +163,6 @@ impl RoutedExecutor {
     pub async fn execute_with_tags(
         &self,
         executor_context: &ExecutorContext,
-        traces: &TraceMap,
         memory_storage: Option<Arc<Mutex<InMemoryStorage>>>,
         tags: HashMap<String, String>,
     ) -> Result<HttpResponse, GatewayApiError> {
@@ -191,12 +202,13 @@ impl RoutedExecutor {
                     }
                     None => BTreeMap::new(),
                 };
+                let metrics_repository = InMemoryMetricsRepository::new(metrics);
                 let executor_result = llm_router
                     .route(
                         request.request.clone(),
                         &executor_context.provided_models,
                         executor_context.headers.clone(),
-                        metrics,
+                        &metrics_repository,
                     )
                     .instrument(span.clone())
                     .await;
@@ -212,7 +224,8 @@ impl RoutedExecutor {
                 }
             } else {
                 // 传递 tags 到 execute_request
-                let result = Self::execute_request_with_tags(&request, executor_context, traces, tags.clone()).await;
+                let result =
+                    Self::execute_request_with_tags(&request, executor_context, tags.clone()).await;
                 match result {
                     Ok(response) => return Ok(response),
                     Err(err) => {
@@ -234,14 +247,10 @@ impl RoutedExecutor {
     async fn execute_request(
         request: &ChatCompletionRequestWithTools<RoutingStrategy>,
         executor_context: &ExecutorContext,
-        traces: &TraceMap,
     ) -> Result<HttpResponse, GatewayApiError> {
         let span = tracing::Span::current();
         span.record("request", &serde_json::to_string(&request)?);
         let trace_id = span.context().span().span_context().trace_id();
-        traces
-            .entry(trace_id)
-            .or_insert_with(|| broadcast::channel(8));
 
         let model_name = request.request.model.clone();
 
@@ -313,16 +322,12 @@ impl RoutedExecutor {
     async fn execute_request_with_tags(
         request: &ChatCompletionRequestWithTools<RoutingStrategy>,
         executor_context: &ExecutorContext,
-        traces: &TraceMap,
         tags: HashMap<String, String>,
     ) -> Result<HttpResponse, GatewayApiError> {
         let span = tracing::Span::current();
         span.record("request", &serde_json::to_string(&request)?);
         let trace_id = span.context().span().span_context().trace_id();
-        traces
-            .entry(trace_id)
-            .or_insert_with(|| broadcast::channel(8));
-
+        
         let model_name = request.request.model.clone();
 
         let llm_model =
@@ -397,18 +402,19 @@ impl RoutedExecutor {
         target: &HashMap<String, serde_json::Value>,
     ) -> Result<ChatCompletionRequestWithTools<RoutingStrategy>, RoutedExecutorError> {
         let mut request_value = serde_json::to_value(request)
-            .map_err(RoutedExecutorError::FailedToDeserializeRequestResult)?;
+            .map_err(RoutedExecutorError::FailedToSerializeRequestResult)?;
 
         if let Some(obj) = request_value.as_object_mut() {
-            for (key, value) in target {
-                // Only override if the new value is not null
-                if !value.is_null() {
-                    obj.insert(key.clone(), value.clone());
+            if let Some(request_field) = obj.get_mut("request").and_then(|r| r.as_object_mut()) {
+                for (key, value) in target {
+                    if !value.is_null() {
+                        request_field.insert(key.clone(), value.clone());
+                    }
                 }
             }
         }
 
         serde_json::from_value(request_value)
-            .map_err(RoutedExecutorError::FailedToDeserializeRequestResult)
+            .map_err(RoutedExecutorError::FailedToDeserializeMergedRequestResult)
     }
 }

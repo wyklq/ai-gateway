@@ -402,8 +402,24 @@ impl<C: Config> OpenAIModel<C> {
                         .map_err(|e| GatewayError::CustomError(e.to_string()))?;
                     }
                     if response.choices.is_empty() {
+                        // XAI bug workaround
+                        if let Some(usage) = response.usage {
+                            // If there are no tool calls, it means the response is finished with all content passed
+                            let reason = match tool_call_states.len() {
+                                0 => FinishReason::Stop,
+                                _ => FinishReason::ToolCalls,
+                            };
+
+                            return Ok((
+                                reason,
+                                tool_call_states.into_values().collect(),
+                                Some(usage),
+                            ));
+                        }
+
                         continue;
                     }
+
                     let chat_choice = response.choices.remove(0);
                     if let Some(tool_calls) = chat_choice.delta.tool_calls {
                         for tool_call in tool_calls.into_iter() {
@@ -514,7 +530,15 @@ impl<C: Config> OpenAIModel<C> {
         }
         // always take 1 since we put n = 1 in request
         let first_choice = choices[0].to_owned();
-        let finish_reason = first_choice.finish_reason;
+
+        let mut finish_reason = first_choice.finish_reason;
+        // XAI bug workaround
+        if let Some(content) = &first_choice.message.content {
+            if content.is_empty() && first_choice.message.tool_calls.is_some() {
+                finish_reason = Some(FinishReason::ToolCalls);
+            }
+        }
+
         match finish_reason.as_ref() {
             Some(&FinishReason::ToolCalls) => {
                 let tool_calls = first_choice.message.tool_calls.unwrap();

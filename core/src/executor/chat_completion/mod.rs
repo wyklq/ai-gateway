@@ -352,7 +352,7 @@ pub async fn execute_with_tags<T: Serialize + DeserializeOwned + Debug + Clone>(
     router_span: tracing::Span,
     stream_cache_context: StreamCacheContext,
     basic_cache_context: BasicCacheContext,
-    _tags: Option<HashMap<String, String>>,
+    tags: Option<HashMap<String, String>>,
 ) -> Result<
     Either<
         Result<ChatCompletionStream, GatewayApiError>,
@@ -512,6 +512,9 @@ pub async fn execute_with_tags<T: Serialize + DeserializeOwned + Debug + Clone>(
         .as_ref()
         .and_then(|e| e.variables.clone())
         .unwrap_or_default();
+
+    let tags_to_use = tags.unwrap_or_else(|| executor_context.tags.clone());
+
     if is_stream {
         Ok(Left(
             stream_chunks(
@@ -519,7 +522,7 @@ pub async fn execute_with_tags<T: Serialize + DeserializeOwned + Debug + Clone>(
                 resolved_model_context.model_instance,
                 messages.clone(),
                 executor_context.callbackhandler.clone().into(),
-                executor_context.tags.clone(),
+                tags_to_use,
                 input_vars,
                 stream_cache_context,
             )
@@ -531,7 +534,7 @@ pub async fn execute_with_tags<T: Serialize + DeserializeOwned + Debug + Clone>(
             request,
             resolved_model_context.model_instance,
             messages.clone(),
-            executor_context.tags.clone(),
+            tags_to_use,
             tx,
             span.clone(),
             Some(handle),
