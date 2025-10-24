@@ -13,6 +13,7 @@ use futures_util::stream::StreamExt;
 use reqwest::header::{HeaderMap, HeaderValue};
 use reqwest::{Client, Url};
 use serde_json::json;
+use serde::{Serialize, Deserialize};
 use tokio::sync::mpsc::Sender;
 use tracing::{error, Span, field};
 use std::collections::HashMap;
@@ -153,56 +154,40 @@ impl OllamaModel {
         &self,
         response: serde_json::Value,
     ) -> Result<(ChatCompletionMessage, Option<CompletionModelUsage>), ModelError> {
-        // 适配 OpenAI 风格的返回格式
+        // Compatible with OpenAI style; support string or array content
         let message = response
             .get("choices")
             .and_then(|choices| choices.get(0))
             .and_then(|choice| choice.get("message"))
             .ok_or_else(|| ModelError::ParsingResponseFailed("Missing choices[0].message".to_string()))?;
 
-        let role = message.get("role")
-            .and_then(|v| v.as_str())
-            .unwrap_or("assistant")
-            .to_string();
-        let content = message.get("content")
-            .and_then(|v| v.as_str())
-            .unwrap_or("")
-            .to_string();
+        let role = message.get("role").and_then(|v| v.as_str()).unwrap_or("assistant").to_string();
+        let raw_content = message.get("content").ok_or_else(|| ModelError::ParsingResponseFailed("Missing message.content".to_string()))?;
 
-        // 解析工具调用字段
+        // Parse tool calls if present
         let tool_calls = message.get("tool_calls").and_then(|tool_calls_value| {
-            if let Some(tool_calls_array) = tool_calls_value.as_array() {
-                let parsed_tool_calls: Vec<ToolCall> = tool_calls_array
+            tool_calls_value.as_array().map(|tool_calls_array| {
+                tool_calls_array
                     .iter()
                     .enumerate()
                     .filter_map(|(index, tool_call)| {
                         let id = tool_call.get("id")?.as_str()?.to_string();
                         let tool_type = tool_call.get("type")?.as_str()?.to_string();
-                        
                         let function = tool_call.get("function")?;
                         let name = function.get("name")?.as_str()?.to_string();
                         let arguments = function.get("arguments")?.as_str()?.to_string();
-                        
                         Some(ToolCall {
                             index: Some(index),
                             id,
                             r#type: tool_type,
-                            function: FunctionCall {
-                                name,
-                                arguments,
-                            },
+                            function: FunctionCall { name, arguments },
                         })
                     })
-                    .collect();
-                
-                if !parsed_tool_calls.is_empty() {
-                    return Some(parsed_tool_calls);
-                }
-            }
-            None
+                    .collect::<Vec<ToolCall>>()
+            })
         });
 
-        // 解析 usage 字段
+        // usage field parsing
         let usage = response.get("usage").and_then(|usage_val| {
             let prompt_tokens = usage_val.get("prompt_tokens").and_then(|v| v.as_u64()).unwrap_or(0) as u32;
             let completion_tokens = usage_val.get("completion_tokens").and_then(|v| v.as_u64()).unwrap_or(0) as u32;
@@ -217,12 +202,47 @@ impl OllamaModel {
             })
         });
 
-        // Create chat message with potential tool calls
-        let mut chat_msg = ChatCompletionMessage::new_text(role, content);
-        if let Some(tools) = tool_calls {
-            chat_msg.tool_calls = Some(tools);
-        }
-        
+        // Content may be string or array of objects
+        let mut chat_msg = if let Some(s) = raw_content.as_str() {
+            ChatCompletionMessage::new_text(role, s.to_string())
+        } else if let Some(arr) = raw_content.as_array() {
+            let mut parts: Vec<crate::types::gateway::Content> = Vec::new();
+            for item in arr {
+                if let Some(t) = item.get("type").and_then(|v| v.as_str()) {
+                    match t {
+                        "text" => {
+                            let txt = item.get("text").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                            parts.push(crate::types::gateway::Content { r#type: crate::types::gateway::ContentType::Text, text: Some(txt), image_url: None, audio: None });
+                        }
+                        "image_url" => {
+                            let url = item.get("image_url")
+                                .and_then(|iu| iu.get("url"))
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("")
+                                .to_string();
+                            parts.push(crate::types::gateway::Content { r#type: crate::types::gateway::ContentType::ImageUrl, text: None, image_url: Some(crate::types::gateway::ImageUrl { url, detail: None }), audio: None });
+                        }
+                        "input_audio" => {
+                                if let Some(audio_obj) = item.get("audio") {
+                                let data = audio_obj.get("data").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                                let format = audio_obj.get("format").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                                parts.push(crate::types::gateway::Content { r#type: crate::types::gateway::ContentType::InputAudio, text: None, image_url: None, audio: Some(crate::types::gateway::InputAudio { data, format }) });
+                            } else {
+                                parts.push(crate::types::gateway::Content { r#type: crate::types::gateway::ContentType::InputAudio, text: None, image_url: None, audio: None });
+                            }
+                        }
+                        other => {
+                            tracing::debug!(target: "ollama_debug", "Unknown content part type in response: {}", other);
+                        }
+                    }
+                }
+            }
+            ChatCompletionMessage { role, content: Some(ChatCompletionContent::Content(parts)), tool_call_id: None, tool_calls: None, refusal: None }
+        } else {
+            ChatCompletionMessage::new_text(role, "".to_string())
+        };
+
+        if let Some(tools) = tool_calls { chat_msg.tool_calls = Some(tools); }
         Ok((chat_msg, usage))
     }
     
@@ -264,78 +284,115 @@ impl OllamaModel {
     }
 
     fn build_chat_request(&self, messages: &[ChatCompletionMessage], model_name: &str, stream: bool) -> serde_json::Value {
-        // Format messages for Ollama API format
-        let formatted_messages: Vec<serde_json::Value> = messages.iter().map(|msg| {
-            let content = match &msg.content {
-                Some(ChatCompletionContent::Text(text)) => text.clone(),
-                _ => String::new(),
-            };
+        #[derive(Debug, Serialize, Deserialize)]
+        struct OllamaImageUrl { url: String }
+        #[derive(Debug, Serialize, Deserialize)]
+        struct OllamaAudio { data: String, format: String }
+        #[derive(Debug, Serialize, Deserialize)]
+        struct OllamaContentPart {
+            #[serde(rename = "type")]
+            part_type: String,
+            #[serde(skip_serializing_if = "Option::is_none")]
+            text: Option<String>,
+            #[serde(skip_serializing_if = "Option::is_none")]
+            image_url: Option<OllamaImageUrl>,
+            #[serde(skip_serializing_if = "Option::is_none")]
+            audio: Option<OllamaAudio>,
+        }
+        #[derive(Debug, Serialize, Deserialize)]
+        struct OllamaRequestMessage {
+            role: String,
+            content: serde_json::Value,
+        }
+        #[derive(Debug, Serialize, Deserialize)]
+        struct OllamaChatRequest {
+            model: String,
+            messages: Vec<OllamaRequestMessage>,
+            stream: bool,
+            #[serde(skip_serializing_if = "Option::is_none")]
+            temperature: Option<f32>,
+            #[serde(skip_serializing_if = "Option::is_none")]
+            max_tokens: Option<u32>,
+            #[serde(skip_serializing_if = "Option::is_none")]
+            top_p: Option<f32>,
+            #[serde(skip_serializing_if = "Option::is_none")]
+            stop: Option<Vec<String>>,
+            #[serde(skip_serializing_if = "Option::is_none")]
+            format: Option<String>,
+            #[serde(skip_serializing_if = "Option::is_none")]
+            frequency_penalty: Option<f32>,
+            #[serde(skip_serializing_if = "Option::is_none")]
+            presence_penalty: Option<f32>,
+            #[serde(skip_serializing_if = "Option::is_none")]
+            seed: Option<u32>,
+            #[serde(skip_serializing_if = "Option::is_none")]
+            tools: Option<serde_json::Value>,
+            #[serde(skip_serializing_if = "Option::is_none")]
+            tool_choice: Option<serde_json::Value>,
+            #[serde(skip_serializing_if = "Option::is_none")]
+            logit_bias: Option<serde_json::Value>,
+            #[serde(skip_serializing_if = "Option::is_none")]
+            user: Option<String>,
+            #[serde(skip_serializing_if = "Option::is_none")]
+            n: Option<u32>,
+        }
 
-            json!({
-                "role": msg.role.to_string(),
-                "content": content
-            })
-        }).collect();
-        
-        // Build request payload
-        let mut request = json!({
-            "model": model_name,
-            "messages": formatted_messages,
-            "stream": stream,
-        });
-        
-        // Add optional parameters if specified
-        if let Some(temp) = self.params.temperature {
-            request["temperature"] = json!(temp);
-        }
-        
-        if let Some(tokens) = self.params.max_tokens {
-            request["max_tokens"] = json!(tokens);
-        }
-
-        if let Some(top_p) = self.params.top_p {
-            request["top_p"] = json!(top_p);
-        }
-        
-        if let Some(stop) = &self.params.stop {
-            request["stop"] = json!(stop);
-        }
-        
-        if let Some(format) = &self.params.response_format {
-            match format {
-                OllamaResponseFormat::Json => {
-                    request["format"] = json!("json");
+        let mut req_messages: Vec<OllamaRequestMessage> = Vec::with_capacity(messages.len());
+        for msg in messages {
+            let role = msg.role.to_string();
+            let value = match &msg.content {
+                Some(ChatCompletionContent::Text(t)) => serde_json::Value::String(t.clone()),
+                Some(ChatCompletionContent::Content(contents)) => {
+                    let mut parts: Vec<OllamaContentPart> = Vec::with_capacity(contents.len());
+                    for c in contents {
+                        match c.r#type {
+                            crate::types::gateway::ContentType::Text => {
+                                parts.push(OllamaContentPart { part_type: "text".to_string(), text: c.text.clone(), image_url: None, audio: None });
+                            }
+                            crate::types::gateway::ContentType::ImageUrl => {
+                                let url = c.image_url.as_ref().map(|i| i.url.clone()).unwrap_or_default();
+                                parts.push(OllamaContentPart { part_type: "image_url".to_string(), text: None, image_url: Some(OllamaImageUrl { url }), audio: None });
+                            }
+                            crate::types::gateway::ContentType::InputAudio => {
+                                if let Some(audio) = &c.audio {
+                                    parts.push(OllamaContentPart { part_type: "input_audio".to_string(), text: None, image_url: None, audio: Some(OllamaAudio { data: audio.data.clone(), format: audio.format.clone() }) });
+                                } else {
+                                    parts.push(OllamaContentPart { part_type: "input_audio".to_string(), text: None, image_url: None, audio: None });
+                                }
+                            }
+                        }
+                    }
+                    serde_json::to_value(parts).unwrap_or_else(|_| serde_json::Value::Array(vec![]))
                 }
-            }
+                None => serde_json::Value::String(String::new()),
+            };
+            let rm = OllamaRequestMessage { role, content: value };
+            tracing::debug!(target: "ollama_debug", formatted_message = %serde_json::to_string(&rm).unwrap_or_default());
+            req_messages.push(rm);
         }
 
-        if let Some(freq) = self.params.frequency_penalty {
-            request["frequency_penalty"] = json!(freq);
-        }
-        if let Some(pres) = self.params.presence_penalty {
-            request["presence_penalty"] = json!(pres);
-        }
-        
-        if let Some(seed) = self.params.seed {
-            request["seed"] = json!(seed);
-        }
-        if let Some(ref tools) = self.params.tools {
-            request["tools"] = json!(tools);
-        }
-        if let Some(ref tool_choice) = self.params.tool_choice {
-            request["tool_choice"] = tool_choice.clone();
-        }
-        if let Some(ref logit_bias) = self.params.logit_bias {
-            request["logit_bias"] = json!(logit_bias);
-        }
-        if let Some(ref user) = self.params.user {
-            request["user"] = json!(user);
-        }
-        if let Some(n) = self.params.n {
-            request["n"] = json!(n);
-        }
-        
-        request
+        let request = OllamaChatRequest {
+            model: model_name.to_string(),
+            messages: req_messages,
+            stream,
+            temperature: self.params.temperature,
+            max_tokens: self.params.max_tokens.map(|v| v as u32),
+            top_p: self.params.top_p,
+            stop: self.params.stop.clone(),
+            format: self.params.response_format.as_ref().map(|f| match f { OllamaResponseFormat::Json => "json".to_string() }),
+            frequency_penalty: self.params.frequency_penalty,
+            presence_penalty: self.params.presence_penalty,
+            seed: self.params.seed.map(|v| v as u32),
+            tools: self.params.tools.clone().map(|t| json!(t)),
+            tool_choice: self.params.tool_choice.clone(),
+            logit_bias: self.params.logit_bias.clone().map(|lb| json!(lb)),
+            user: self.params.user.clone(),
+            n: self.params.n,
+        };
+
+        let value = serde_json::to_value(&request).unwrap_or_else(|_| json!({"model": model_name, "messages": [], "stream": stream}));
+        tracing::debug!(target: "ollama_debug", final_request_body = %value);
+        value
     }
 
     fn build_embedding_request(&self, input: &str, model_name: &str) -> serde_json::Value {
@@ -365,12 +422,70 @@ impl ModelInstance for OllamaModel {
             }
         };
 
-        // 仅支持文本消息，转换 Message 为 ChatCompletionMessage
+        // 支持多模态：如果存在 content_array 则重建为 ChatCompletionContent::Content
         let messages: Vec<ChatCompletionMessage> = previous_messages.iter().map(|m| {
-            ChatCompletionMessage::new_text(
-                m.r#type.to_string(),
-                m.content.clone().unwrap_or_default(),
-            )
+            if !m.content_array.is_empty() {
+                let mut contents_vec: Vec<crate::types::gateway::Content> = Vec::new();
+                // 若原始有单独的纯文本 content 字段，保留为一个 text part
+                if let Some(txt) = &m.content {
+                    if !txt.trim().is_empty() {
+                        contents_vec.push(crate::types::gateway::Content {
+                            r#type: crate::types::gateway::ContentType::Text,
+                            text: Some(txt.clone()),
+                            image_url: None,
+                            audio: None,
+                        });
+                    }
+                }
+                for part in &m.content_array {
+                    let kind = part.r#type.to_string();
+                    if kind.eq_ignore_ascii_case("text") {
+                        if !part.value.trim().is_empty() {
+                            contents_vec.push(crate::types::gateway::Content {
+                                r#type: crate::types::gateway::ContentType::Text,
+                                text: Some(part.value.clone()),
+                                image_url: None,
+                                audio: None,
+                            });
+                        }
+                    } else if kind.eq_ignore_ascii_case("image_url") || kind.eq_ignore_ascii_case("image") || kind.eq_ignore_ascii_case("url") {
+                        if part.value.trim().is_empty() { continue; }
+                        let raw = part.value.clone();
+                        // 如果是 JSON 包住的 {"url":"..."} 形式，解析取 url
+                        let mut final_url = raw.clone();
+                        if raw.starts_with('{') && raw.ends_with('}') {
+                            if let Ok(v) = serde_json::from_str::<serde_json::Value>(&raw) {
+                                if let Some(u) = v.get("url").and_then(|x| x.as_str())
+                                    .or_else(|| v.get("image_url").and_then(|x| x.as_str()) ) {
+                                    final_url = u.to_string();
+                                }
+                            }
+                        }
+                        contents_vec.push(crate::types::gateway::Content {
+                            r#type: crate::types::gateway::ContentType::ImageUrl,
+                            text: None,
+                            image_url: Some(crate::types::gateway::ImageUrl { url: final_url, detail: None }),
+                            audio: None,
+                        });
+                    } else if kind.eq_ignore_ascii_case("input_audio") {
+                        // 保留音频（如果需要完整支持，可在 part.additional_options 中扩展）暂时仅当作占位
+                        // 由于 threads::MessageContentPart 里音频数据结构可能不同，这里简单跳过，避免破坏现有逻辑
+                        continue;
+                    }
+                }
+                ChatCompletionMessage {
+                    role: m.r#type.to_string(),
+                    content: Some(ChatCompletionContent::Content(contents_vec)),
+                    tool_call_id: m.tool_call_id.clone(),
+                    tool_calls: m.tool_calls.clone(),
+                    refusal: None,
+                }
+            } else {
+                ChatCompletionMessage::new_text(
+                    m.r#type.to_string(),
+                    m.content.clone().unwrap_or_default(),
+                )
+            }
         }).collect();
         
         // Create a span specifically for this request - using target! pattern from openai.rs
@@ -508,15 +623,31 @@ impl ModelInstance for OllamaModel {
                 ModelError::ConfigurationError(err_msg)
             })?;
 
-            let messages: Vec<ChatCompletionMessage> = previous_messages
-                .iter()
-                .map(|m| {
-                    ChatCompletionMessage::new_text(
-                        m.r#type.to_string(),
-                        m.content.clone().unwrap_or_default(),
-                    )
-                })
-                .collect();
+            let messages: Vec<ChatCompletionMessage> = previous_messages.iter().map(|m| {
+                if !m.content_array.is_empty() {
+                    let mut contents_vec: Vec<crate::types::gateway::Content> = Vec::new();
+                    if let Some(txt) = &m.content { if !txt.trim().is_empty() { contents_vec.push(crate::types::gateway::Content { r#type: crate::types::gateway::ContentType::Text, text: Some(txt.clone()), image_url: None, audio: None }); } }
+                    for part in &m.content_array {
+                        let kind = part.r#type.to_string();
+                        if kind.eq_ignore_ascii_case("text") {
+                            if !part.value.trim().is_empty() {
+                                contents_vec.push(crate::types::gateway::Content { r#type: crate::types::gateway::ContentType::Text, text: Some(part.value.clone()), image_url: None, audio: None });
+                            }
+                        } else if kind.eq_ignore_ascii_case("image_url") || kind.eq_ignore_ascii_case("image") || kind.eq_ignore_ascii_case("url") {
+                            if part.value.trim().is_empty() { continue; }
+                            let raw = part.value.clone();
+                            let mut final_url = raw.clone();
+                            if raw.starts_with('{') && raw.ends_with('}') { if let Ok(v) = serde_json::from_str::<serde_json::Value>(&raw) { if let Some(u) = v.get("url").and_then(|x| x.as_str()).or_else(|| v.get("image_url").and_then(|x| x.as_str()) ) { final_url = u.to_string(); } } }
+                            contents_vec.push(crate::types::gateway::Content { r#type: crate::types::gateway::ContentType::ImageUrl, text: None, image_url: Some(crate::types::gateway::ImageUrl { url: final_url, detail: None }), audio: None });
+                        } else if kind.eq_ignore_ascii_case("input_audio") {
+                            continue; // 暂不处理音频
+                        }
+                    }
+                    ChatCompletionMessage { role: m.r#type.to_string(), content: Some(ChatCompletionContent::Content(contents_vec)), tool_call_id: m.tool_call_id.clone(), tool_calls: m.tool_calls.clone(), refusal: None }
+                } else {
+                    ChatCompletionMessage::new_text(m.r#type.to_string(), m.content.clone().unwrap_or_default())
+                }
+            }).collect();
 
             let request_body = self.build_chat_request(&messages, &model_name, true);
             let headers = self.build_headers();

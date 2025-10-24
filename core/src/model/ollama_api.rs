@@ -421,6 +421,7 @@ impl ModelInstance for OllamaApiModel {
                                 text: None,
                                 image_url: Some(crate::types::gateway::ImageUrl {
                                     url: image_url,
+                                    detail: None,
                                 }),
                                 audio: None,
                             });

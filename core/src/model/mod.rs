@@ -433,12 +433,38 @@ impl<Inner: ModelInstance> ModelInstance for TracedModel<Inner> {
         previous_messages: Vec<Message>,
         tags: HashMap<String, String>,
     ) -> GatewayResult<ChatCompletionMessage> {
+        // Debug: inspect previous_messages for multimodal parts before passing to inner model
+        let mut preview_chat_messages: Vec<serde_json::Value> = Vec::new();
+        for (i, m) in previous_messages.iter().enumerate() {
+            if !m.content_array.is_empty() {
+                tracing::debug!(target: "traced_model_debug", msg_index = i, role = %m.r#type, parts = m.content_array.len(), raw_text = %m.content.as_deref().unwrap_or(""));
+                let mut parts_json: Vec<serde_json::Value> = Vec::new();
+                for (j, part) in m.content_array.iter().enumerate() {
+                    tracing::debug!(target: "traced_model_debug", msg_index = i, part_index = j, part_type = %part.r#type, part_value = %part.value);
+                    let pj = match part.r#type.to_string().as_str() {
+                        "Text" | "text" => json!({"type":"text","text":part.value}),
+                        "ImageUrl" | "image_url" | "image" | "url" => json!({"type":"image_url","image_url":{"url":part.value}}),
+                        "InputAudio" | "input_audio" => json!({"type":"input_audio","audio":{"data":part.value}}),
+                        other => json!({"type":other,"raw":part.value}),
+                    };
+                    parts_json.push(pj);
+                }
+                preview_chat_messages.push(json!({"role":m.r#type.to_string(),"content":parts_json}));
+            } else {
+                tracing::debug!(target: "traced_model_debug", msg_index = i, role = %m.r#type, parts = 0, raw_text = %m.content.as_deref().unwrap_or(""));
+                preview_chat_messages.push(json!({"role":m.r#type.to_string(),"content":m.content.clone().unwrap_or_default()}));
+            }
+        }
+        // Additional attribute for full multi-modal message preservation (OpenAI-style array)
+        let preview_json = json!({"messages": preview_chat_messages});
         let credentials_ident = credentials_identifier(&self.definition.model_params);
         let traced_model: TraceModelDefinition = self.definition.clone().into();
         let model = traced_model.sanitize_json()?;
-        let model_str = serde_json::to_string(&model)?;
-        // TODO: Fix input creation properly
-        let input_str = self.clean_input_trace(&input_vars)?;
+    let model_str = serde_json::to_string(&model)?;
+    // Serialize input vars separately; main input should be the messages (multi-modal aware)
+    let input_vars_str = self.clean_input_trace(&input_vars)?;
+    // Use preview_chat_messages (multi-modal content) as canonical input
+    let input_messages_compact = serde_json::to_string(&preview_chat_messages)?;
         let model_name = self.definition.name.clone();
         let provider_name = self.definition.db_model.provider_name.clone();
         let (tx, mut rx) = channel::<Option<ModelEvent>>(outer_tx.max_capacity());
@@ -447,7 +473,9 @@ impl<Inner: ModelInstance> ModelInstance for TracedModel<Inner> {
             target: "langdb::user_tracing::models",
             parent: self.router_span.clone(),
             SPAN_MODEL_CALL,
-            input = &input_str,
+            input = input_messages_compact,
+            input_vars = input_vars_str,
+            input_messages = %preview_json,
             model = model_str,
             provider_name = provider_name,
             model_name = model_name.clone(),
@@ -588,12 +616,34 @@ impl<Inner: ModelInstance> ModelInstance for TracedModel<Inner> {
         previous_messages: Vec<Message>,
         tags: HashMap<String, String>,
     ) -> GatewayResult<()> {
+        // Rebuild multi-modal preview (same logic as invoke)
+        let mut preview_chat_messages: Vec<serde_json::Value> = Vec::new();
+        for (i, m) in previous_messages.iter().enumerate() {
+            if !m.content_array.is_empty() {
+                tracing::debug!(target: "traced_model_debug", stream_msg_index = i, role = %m.r#type, parts = m.content_array.len(), raw_text = %m.content.as_deref().unwrap_or(""));
+                let mut parts_json: Vec<serde_json::Value> = Vec::new();
+                for (j, part) in m.content_array.iter().enumerate() {
+                    tracing::debug!(target: "traced_model_debug", stream_msg_index = i, part_index = j, part_type = %part.r#type, part_value = %part.value);
+                    let pj = match part.r#type.to_string().as_str() {
+                        "Text" | "text" => json!({"type":"text","text":part.value}),
+                        "ImageUrl" | "image_url" | "image" | "url" => json!({"type":"image_url","image_url":{"url":part.value}}),
+                        "InputAudio" | "input_audio" => json!({"type":"input_audio","audio":{"data":part.value}}),
+                        other => json!({"type":other,"raw":part.value}),
+                    };
+                    parts_json.push(pj);
+                }
+                preview_chat_messages.push(json!({"role":m.r#type.to_string(),"content":parts_json}));
+            } else {
+                preview_chat_messages.push(json!({"role":m.r#type.to_string(),"content":m.content.clone().unwrap_or_default()}));
+            }
+        }
+        let preview_json = json!({"messages": preview_chat_messages});
         let credentials_ident = credentials_identifier(&self.definition.model_params);
         let traced_model: TraceModelDefinition = self.definition.clone().into();
         let model = traced_model.sanitize_json()?;
         let model_str = serde_json::to_string(&model)?;
-        // TODO: Fix input creation properly
-        let input_str = self.clean_input_trace(&input_vars)?;
+        let input_vars_str = self.clean_input_trace(&input_vars)?;
+        let input_messages_compact = serde_json::to_string(&preview_chat_messages)?;
 
         let model_name = self.definition.name.clone();
         let provider_name = self.definition.db_model.provider_name.clone();
@@ -603,7 +653,9 @@ impl<Inner: ModelInstance> ModelInstance for TracedModel<Inner> {
             target: "langdb::user_tracing::models",
             parent: self.router_span.clone(),
             SPAN_MODEL_CALL,
-            input = &input_str,
+            input = input_messages_compact,
+            input_vars = input_vars_str,
+            input_messages = %preview_json,
             model = model_str,
             provider_name = provider_name,
             model_name = model_name.clone(),

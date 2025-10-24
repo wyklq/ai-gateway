@@ -83,6 +83,23 @@ impl MessageMapper {
         model_name: &str,
         user: &str,
     ) -> Result<Message, GatewayError> {
+        // Debug: log incoming ChatCompletionMessage before mapping
+        if let Some(content) = &message.content {
+            match content {
+                ChatCompletionContent::Text(t) => {
+                    tracing::debug!(target: "message_mapper_debug", role = %message.role, kind = "text", text = %t);
+                }
+                ChatCompletionContent::Content(parts) => {
+                    for (idx, p) in parts.iter().enumerate() {
+                        match p.r#type {
+                            ContentType::Text => tracing::debug!(target: "message_mapper_debug", role = %message.role, index = idx, part_type = "text", part_text = %p.text.as_deref().unwrap_or("")),
+                            ContentType::ImageUrl => tracing::debug!(target: "message_mapper_debug", role = %message.role, index = idx, part_type = "image_url", url = %p.image_url.as_ref().map(|u| u.url.clone()).unwrap_or_default()),
+                            ContentType::InputAudio => tracing::debug!(target: "message_mapper_debug", role = %message.role, index = idx, part_type = "input_audio"),
+                        }
+                    }
+                }
+            }
+        }
         let content = if let Some(content) = &message.content {
             match content {
                 ChatCompletionContent::Text(content) => Some(content.clone()),
@@ -104,14 +121,21 @@ impl MessageMapper {
                                 value: c.text.clone().unwrap_or("".to_string()),
                                 additional_options: None,
                             },
-                            ContentType::ImageUrl => MessageContentPart {
-                                r#type: MessageContentType::ImageUrl,
-                                value: c
-                                    .image_url
-                                    .clone()
-                                    .map(|url| url.url.clone())
-                                    .unwrap_or("".to_string()),
-                                additional_options: None,
+                            ContentType::ImageUrl => {
+                                let (value, detail_opt) = c.image_url.clone().map(|url| (url.url, url.detail)).unwrap_or(("".to_string(), None));
+                                let additional_options = detail_opt.as_ref().and_then(|d| {
+                                    match d.as_str() {
+                                        "auto" => Some(MessageContentPartOptions::Image(crate::types::threads::ImageDetail::Auto)),
+                                        "low" => Some(MessageContentPartOptions::Image(crate::types::threads::ImageDetail::Low)),
+                                        "high" => Some(MessageContentPartOptions::Image(crate::types::threads::ImageDetail::High)),
+                                        _ => None,
+                                    }
+                                });
+                                MessageContentPart {
+                                    r#type: MessageContentType::ImageUrl,
+                                    value,
+                                    additional_options,
+                                }
                             },
                             ContentType::InputAudio => {
                                 let audio = c.audio.as_ref().ok_or(GatewayError::CustomError(

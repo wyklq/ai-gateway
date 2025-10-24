@@ -283,6 +283,9 @@ pub struct ResponseFormat {
 #[derive(Debug, Clone, Serialize, Deserialize, Hash, PartialEq, Eq)]
 pub struct ImageUrl {
     pub url: String,
+    // Optional image detail (e.g. auto|low|high) passed through from user request
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub detail: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Hash, PartialEq, Eq)]
@@ -752,6 +755,7 @@ mod tests {
                 text: None,
                 image_url: Some(ImageUrl {
                     url: "https://example.com/image.jpg".to_string(),
+                    detail: Some("high".to_string()),
                 }),
                 audio: None,
             },
