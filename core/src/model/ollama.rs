@@ -1,5 +1,8 @@
 use crate::model::error::ModelError;
-use crate::model::types::{LLMFirstToken, ModelEvent, ModelEventType};
+use crate::model::types::{
+    LLMContentEvent, LLMFinishEvent, LLMFirstToken, LLMStartEvent, ModelEvent, ModelEventType,
+    ModelFinishReason, ModelToolCall,
+};
 use crate::model::ModelInstance;
 use crate::types::credentials::ApiKeyCredentials;
 use crate::types::engine::ExecutionOptions;
@@ -43,9 +46,8 @@ pub struct OllamaModel {
 }
 
 impl OllamaModel {
-    // 添加 map_tool_call 方法，将 ToolCall 转换为 ModelToolCall
-    pub fn map_tool_call(tool_call: &ToolCall) -> crate::model::types::ModelToolCall {
-        crate::model::types::ModelToolCall {
+    fn map_tool_call(tool_call: &ToolCall) -> ModelToolCall {
+        ModelToolCall {
             tool_id: tool_call.id.clone(),
             tool_name: tool_call.function.name.clone(),
             input: tool_call.function.arguments.clone(),
@@ -131,7 +133,7 @@ impl OllamaModel {
 
             let _ = tx.try_send(Some(ModelEvent::new(
                 &span,
-                ModelEventType::LlmContent(crate::model::types::LLMContentEvent {
+                ModelEventType::LlmContent(LLMContentEvent {
                     content: error_msg.clone(),
                 })
             ))); 
@@ -175,7 +177,13 @@ impl OllamaModel {
                         let tool_type = tool_call.get("type")?.as_str()?.to_string();
                         let function = tool_call.get("function")?;
                         let name = function.get("name")?.as_str()?.to_string();
-                        let arguments = function.get("arguments")?.as_str()?.to_string();
+                        let arguments_value = function.get("arguments")?;
+                        let arguments = if let Some(s) = arguments_value.as_str() {
+                            s.to_string()
+                        } else {
+                            // Handle arguments returned as a JSON object instead of a string
+                            arguments_value.to_string()
+                        };
                         Some(ToolCall {
                             index: Some(index),
                             id,
@@ -505,7 +513,7 @@ impl ModelInstance for OllamaModel {
         // Send LlmStart event to properly initialize trace context - use span directly, not current()
         let _ = tx.try_send(Some(ModelEvent::new(
             &span,
-            ModelEventType::LlmStart(crate::model::types::LLMStartEvent {
+            ModelEventType::LlmStart(LLMStartEvent {
                 provider_name: "ollama".to_string(),
                 model_name: model_name.clone(),
                 input,
@@ -561,11 +569,11 @@ impl ModelInstance for OllamaModel {
         // 发送 LlmStop 事件 - use span directly, not current()
         let tool_calls_for_event = message.tool_calls.clone().unwrap_or_default();
         // 类型转换，将 ToolCall 转换为 ModelToolCall
-        let tool_calls_for_event: Vec<crate::model::types::ModelToolCall> = tool_calls_for_event.iter().map(Self::map_tool_call).collect();
+        let tool_calls_for_event: Vec<ModelToolCall> = tool_calls_for_event.iter().map(Self::map_tool_call).collect();
         
         let _ = tx.try_send(Some(ModelEvent::new(
             &span,
-            ModelEventType::LlmStop(crate::model::types::LLMFinishEvent {
+            ModelEventType::LlmStop(LLMFinishEvent {
                 provider_name: "ollama".to_string(),
                 model_name: model_name.clone(),
                 output: message.content.as_ref().and_then(|c| c.as_string()),
@@ -574,9 +582,9 @@ impl ModelInstance for OllamaModel {
                     _ => Default::default(),
                 }),
                 finish_reason: if message.tool_calls.is_some() {
-                    crate::model::types::ModelFinishReason::ToolCalls
+                    ModelFinishReason::ToolCalls
                 } else {
-                    crate::model::types::ModelFinishReason::Stop
+                    ModelFinishReason::Stop
                 },
                 tool_calls: tool_calls_for_event,
                 credentials_ident,
@@ -609,7 +617,7 @@ impl ModelInstance for OllamaModel {
         async move {
             let _ = tx.try_send(Some(ModelEvent::new(
                 &span_clone,
-                ModelEventType::LlmStart(crate::model::types::LLMStartEvent {
+                ModelEventType::LlmStart(LLMStartEvent {
                     provider_name: "ollama".to_string(),
                     model_name: model_name.clone(),
                     input: serde_json::to_string(&previous_messages).unwrap_or_default(),
@@ -679,12 +687,12 @@ impl ModelInstance for OllamaModel {
                                 };
                                 let _ = tx.try_send(Some(ModelEvent::new(
                                     &span_clone,
-                                    ModelEventType::LlmStop(crate::model::types::LLMFinishEvent {
+                                    ModelEventType::LlmStop(LLMFinishEvent {
                                         provider_name: "ollama".to_string(),
                                         model_name: model_name.clone(),
                                         output: Some(error_msg.clone()),
                                         usage: None,
-                                        finish_reason: crate::model::types::ModelFinishReason::ContentFilter,
+                                        finish_reason: ModelFinishReason::ContentFilter,
                                         tool_calls: vec![], // 空的 ModelToolCall 向量
                                         credentials_ident,
                                     }),
@@ -714,9 +722,10 @@ impl ModelInstance for OllamaModel {
 
             let mut stream = response.bytes_stream();
             let mut full_content = String::new();
-            let mut finish_reason = crate::model::types::ModelFinishReason::Stop;
+            let mut finish_reason = ModelFinishReason::Stop;
             let mut first_token_received = false;
             let mut done = false;
+            let mut tool_call_states: HashMap<u32, ModelToolCall> = HashMap::new();
 
             while let Some(item) = stream.next().await {
                 if done {
@@ -756,7 +765,7 @@ impl ModelInstance for OllamaModel {
                                             let _ = tx.try_send(Some(ModelEvent::new(
                                                 &span_clone,
                                                 ModelEventType::LlmContent(
-                                                    crate::model::types::LLMContentEvent {
+                                                    LLMContentEvent {
                                                         content: content.to_string(),
                                                     },
                                                 ),
@@ -766,21 +775,47 @@ impl ModelInstance for OllamaModel {
                                     // Extract and process tool calls
                                     if let Some(delta_tool_calls) = delta.get("tool_calls").and_then(|tc| tc.as_array()) {
                                         for tool_call in delta_tool_calls {
-                                            // 只要存在 tool_calls 就设置完成原因为 ToolCalls
-                                            if tool_call.get("id").is_some() {
-                                                finish_reason = crate::model::types::ModelFinishReason::ToolCalls;
-                                                // 直接忽略 LlmToolCall 相关事件
+                                            let index = tool_call.get("index")
+                                                .and_then(|i| i.as_u64())
+                                                .map(|i| i as u32)
+                                                .unwrap_or(0);
+                                            
+                                            let state = tool_call_states.entry(index).or_insert(ModelToolCall {
+                                                tool_id: String::new(),
+                                                tool_name: String::new(),
+                                                input: String::new(),
+                                            });
+                                            
+                                            if let Some(id) = tool_call.get("id").and_then(|i| i.as_str()) {
+                                                state.tool_id = id.to_string();
+                                                finish_reason = ModelFinishReason::ToolCalls;
+                                            }
+                                            
+                                            if let Some(function) = tool_call.get("function") {
+                                                if let Some(name) = function.get("name").and_then(|n| n.as_str()) {
+                                                    state.tool_name = name.to_string();
+                                                    finish_reason = ModelFinishReason::ToolCalls;
+                                                }
+                                                if let Some(args_value) = function.get("arguments") {
+                                                    let args_str = if let Some(s) = args_value.as_str() {
+                                                        s
+                                                    } else {
+                                                        // Handle arguments returned as a JSON object
+                                                        &args_value.to_string()
+                                                    };
+                                                    state.input.push_str(args_str);
+                                                }
                                             }
                                         }
                                     }
                                 }
                                 if let Some(reason) = choice.get("finish_reason").and_then(|r| r.as_str()) {
                                     finish_reason = match reason {
-                                        "stop" => crate::model::types::ModelFinishReason::Stop,
-                                        "length" => crate::model::types::ModelFinishReason::Length,
-                                        "content_filter" => crate::model::types::ModelFinishReason::ContentFilter,
-                                        "tool_calls" => crate::model::types::ModelFinishReason::ToolCalls,
-                                        _ => crate::model::types::ModelFinishReason::Stop,
+                                        "stop" => ModelFinishReason::Stop,
+                                        "length" => ModelFinishReason::Length,
+                                        "content_filter" => ModelFinishReason::ContentFilter,
+                                        "tool_calls" => ModelFinishReason::ToolCalls,
+                                        _ => ModelFinishReason::Stop,
                                     };
                                 }
                             }
@@ -809,25 +844,17 @@ impl ModelInstance for OllamaModel {
             let completion_tokens = Some(completion_length / 4);
             let usage = self.calculate_usage(prompt_tokens, completion_tokens);
 
-            // We need to collect any tool calls from the final response
-            let collected_tool_calls: Vec<crate::model::types::ModelToolCall> = if finish_reason == crate::model::types::ModelFinishReason::ToolCalls {
-                // In a real implementation, you would collect tool calls from stream chunks
-                // For simplicity, we're creating a placeholder implementation that relies on the finish reason
-                // In production, you should maintain a list of tool calls seen in the stream
-                let tool_calls = Vec::new();
-                
-                // If we know we had tool calls (from finish_reason), but don't have the details,
-                // we can add a debug note about it
-                tracing::debug!(target: "ollama_debug", "Stream finished with tool calls but details weren't collected");
-                
-                tool_calls
-            } else {
-                vec![]
-            };
+            // Collect tool calls sorted by index to preserve ordering
+            let mut tool_call_entries: Vec<_> = tool_call_states.into_iter().collect();
+            tool_call_entries.sort_by_key(|(index, _)| *index);
+            let collected_tool_calls: Vec<ModelToolCall> = tool_call_entries
+                .into_iter()
+                .map(|(_, tc)| tc)
+                .collect();
             
             let _ = tx.try_send(Some(ModelEvent::new(
                 &span_clone,
-                ModelEventType::LlmStop(crate::model::types::LLMFinishEvent {
+                ModelEventType::LlmStop(LLMFinishEvent {
                     provider_name: "ollama".to_string(),
                     model_name: model_name.clone(),
                     output: Some(full_content),
