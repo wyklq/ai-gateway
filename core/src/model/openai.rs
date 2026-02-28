@@ -66,6 +66,23 @@ fn custom_err(e: impl ToString) -> ModelError {
     ModelError::CustomError(e.to_string())
 }
 
+/// Map OpenAIError from async_openai. When the upstream returns a non-OpenAI error
+/// body (e.g. HTTP 404 with `{"detail":"Not Found"}` as from FastAPI), the client
+/// fails to deserialize with "missing field `error`". We map that to a clear
+/// RequestFailed so users get a helpful message instead of a deserialization error.
+fn map_openai_api_error(e: OpenAIError) -> ModelError {
+    let msg = e.to_string();
+    if msg.contains("missing field `error`") || msg.contains("failed to deserialize api response") {
+        ModelError::RequestFailed(
+            "Upstream API returned an error in non-OpenAI format (e.g. {\"detail\": \"Not Found\"}). \
+             This often indicates HTTP 404 — verify the base URL and model name."
+                .to_string(),
+        )
+    } else {
+        ModelError::CustomError(msg)
+    }
+}
+
 /// Parse an Azure OpenAI URL into AzureConfig
 /// Format: https://{resource-name}.openai.azure.com/openai/deployments/{deployment-id}/chat/completions?api-version={api-version}
 fn parse_azure_url(endpoint: &str, api_key: String) -> Result<AzureConfig, ModelError> {
@@ -475,7 +492,7 @@ impl<C: Config> OpenAIModel<C> {
                 }
                 Err(err) => {
                     tracing::warn!("OpenAI API error: {err}");
-                    return Err(ModelError::OpenAIApi(err).into());
+                    return Err(map_openai_api_error(err).into());
                 }
             }
         }
@@ -512,7 +529,7 @@ impl<C: Config> OpenAIModel<C> {
                 .as_ref()
                 .map(JsonValue)
                 .record();
-            let response = result.map_err(custom_err)?;
+            let response = result.map_err(map_openai_api_error)?;
 
             let span = Span::current();
             span.record("output", serde_json::to_string(&response)?);
@@ -767,7 +784,7 @@ impl<C: Config> OpenAIModel<C> {
             .chat()
             .create_stream(request)
             .await
-            .map_err(ModelError::OpenAIApi)?;
+            .map_err(map_openai_api_error)?;
         let (finish_reason, tool_calls, usage) = self
             .process_stream(stream, tx, first_response_received)
             .instrument(span.clone())
