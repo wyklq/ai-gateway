@@ -2,6 +2,7 @@ use crate::events::{JsonValue, RecordResult, SPAN_OPENAI};
 use crate::model::error::ModelError;
 use crate::model::openai::openai_client;
 use crate::model::types::LLMFinishEvent;
+use crate::model::types::LLMStartEvent;
 use crate::model::types::ModelEvent;
 use crate::model::types::ModelEventType;
 use crate::model::types::ModelFinishReason;
@@ -79,6 +80,23 @@ impl OpenAIEmbed {
         tx: Option<&tokio::sync::mpsc::Sender<Option<ModelEvent>>>,
     ) -> GatewayResult<CreateEmbeddingResponse> {
         let embedding_model = self.params.model.as_ref().unwrap();
+
+        if let Some(tx) = tx {
+            let input_preview = match &input {
+                EmbeddingInput::String(s) => s.chars().take(500).collect::<String>(),
+                EmbeddingInput::Array(_) => "(array input)".to_string(),
+            };
+            let _ = tx
+                .send(Some(ModelEvent::new(
+                    &span,
+                    ModelEventType::LlmStart(LLMStartEvent {
+                        provider_name: SPAN_OPENAI.to_string(),
+                        model_name: embedding_model.clone(),
+                        input: input_preview,
+                    }),
+                )))
+                .await;
+        }
 
         // Start building the request
         let mut request_builder = CreateEmbeddingRequestArgs::default();

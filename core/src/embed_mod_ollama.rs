@@ -5,7 +5,7 @@ use crate::types::credentials::ApiKeyCredentials;
 use crate::types::gateway::{EmbeddingUsage, Input, CreateEmbeddingResponse as GatewayEmbeddingResponse, EmbeddingData};
 use crate::GatewayError;
 use crate::GatewayResult;
-use crate::model::types::{ModelEvent, ModelEventType, ModelFinishReason, LLMFinishEvent};
+use crate::model::types::{ModelEvent, ModelEventType, ModelFinishReason, LLMFinishEvent, LLMStartEvent};
 use futures::stream::TryReadyChunksError;
 use futures::{Stream, TryStreamExt};
 use serde_json::Value;
@@ -51,6 +51,20 @@ impl OllamaEmbed {
         span: Span,
         tx: Option<&tokio::sync::mpsc::Sender<Option<ModelEvent>>>,
     ) -> GatewayResult<(Vec<f32>, async_openai::types::EmbeddingUsage)> {
+        if let Some(tx) = tx {
+            let model_name = self.model.get_model_name();
+            let input_preview: String = input.chars().take(500).collect();
+            let _ = tx
+                .send(Some(ModelEvent::new(
+                    &span,
+                    ModelEventType::LlmStart(LLMStartEvent {
+                        provider_name: "ollama".to_string(),
+                        model_name: model_name.clone(),
+                        input: input_preview,
+                    }),
+                )))
+                .await;
+        }
         let embedding_input = async_openai::types::EmbeddingInput::String(input);
         let response = self.model.embed(embedding_input).await.map_err(GatewayError::from)?;
         // 这里只取第一个 embedding

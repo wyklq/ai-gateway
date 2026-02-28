@@ -11,6 +11,9 @@ use langdb_core::{
 
 use crate::{cost::GatewayCostCalculator, usage::update_usage};
 
+/// Trace ID 全零表示无有效 trace 上下文（例如部分 embedding 路径），不对此打 warning。
+const ZERO_TRACE_ID: &str = "00000000000000000000000000000000";
+
 pub fn init_callback_handler(
     storage: Arc<Mutex<InMemoryStorage>>,
     calculator: GatewayCostCalculator,
@@ -42,12 +45,6 @@ pub fn init_callback_handler(
                             );
                         }
                         ModelEventType::LlmFirstToken(_) => {
-                            println!(
-                                "Handling LlmFirstToken for trace_id: {}. Current start_times keys: {:?}. Model event: {:?}",
-                                model_event.event.trace_id,
-                                start_times.lock().await.keys().cloned().collect::<Vec<_>>(),
-                                model_event
-                            );
                             let ttft = {
                                 let times = start_times.lock().await;
                                 if let Some(start_time) = times.get(&model_event.event.trace_id) {
@@ -57,12 +54,14 @@ pub fn init_callback_handler(
                                     ttft_map.insert(model_event.event.trace_id.clone(), ttft_ms);
                                     Some(ttft_ms)
                                 } else {
-                                    tracing::warn!(
-                                        "No start time found for trace {}. Current start_times keys: {:?}. Model event: {:?}",
-                                        model_event.event.trace_id,
-                                        times.keys().cloned().collect::<Vec<_>>(),
-                                        model_event
-                                    );
+                                    if model_event.event.trace_id != ZERO_TRACE_ID {
+                                        tracing::warn!(
+                                            "No start time found for trace {}. Current start_times keys: {:?}. Model event: {:?}",
+                                            model_event.event.trace_id,
+                                            times.keys().cloned().collect::<Vec<_>>(),
+                                            model_event
+                                        );
+                                    }
                                     None
                                 }
                             };
@@ -89,7 +88,9 @@ pub fn init_callback_handler(
                                         duration.num_milliseconds()
                                     });
 
-                                if duration.is_none() {
+                                if duration.is_none()
+                                    && model_event.event.trace_id != ZERO_TRACE_ID
+                                {
                                     tracing::warn!(
                                         "No start time found for trace {}",
                                         model_event.event.trace_id
