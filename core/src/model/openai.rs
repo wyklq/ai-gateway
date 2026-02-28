@@ -179,7 +179,10 @@ impl OpenAIModel<OpenAIConfig> {
             }
         }
 
-        let client = client.unwrap_or(openai_client(credentials, endpoint)?);
+        let client = match client {
+            Some(c) => c,
+            None => openai_client(credentials, endpoint)?,
+        };
 
         Ok(Self {
             params,
