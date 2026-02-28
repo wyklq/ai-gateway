@@ -84,7 +84,7 @@ impl OpenAIEmbed {
         if let Some(tx) = tx {
             let input_preview = match &input {
                 EmbeddingInput::String(s) => s.chars().take(500).collect::<String>(),
-                EmbeddingInput::Array(_) => "(array input)".to_string(),
+                _ => "(array input)".to_string(),
             };
             let _ = tx
                 .send(Some(ModelEvent::new(
