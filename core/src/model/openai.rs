@@ -8,7 +8,7 @@ use super::{CredentialsIdent, ModelInstance};
 use crate::error::GatewayError;
 use crate::events::JsonValue;
 use crate::events::SPAN_OPENAI;
-use crate::events::{self, RecordResult};
+use crate::events;
 use crate::model::handler::handle_tool_call;
 use crate::model::types::LLMFirstToken;
 use crate::model::{async_trait, DEFAULT_MAX_RETRIES};
@@ -41,6 +41,7 @@ use async_openai::Client;
 use futures::Stream;
 use futures::StreamExt;
 use serde_json::Value;
+use std::collections::hash_map::Entry;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use tracing::field;
@@ -379,8 +380,12 @@ impl<C: Config> OpenAIModel<C> {
             builder.response_format(schema.clone());
         }
 
+        let model_name = model_params.model.as_ref().ok_or_else(|| {
+            ModelError::ConfigurationError("OpenAI model name is missing".to_string())
+        })?;
+
         builder
-            .model(model_params.model.as_ref().unwrap())
+            .model(model_name)
             .messages(messages)
             .stream(stream);
         if !self.tools.is_empty() {
@@ -452,16 +457,31 @@ impl<C: Config> OpenAIModel<C> {
                             else {
                                 continue;
                             };
-                            let state = tool_call_states.entry(index).or_insert_with(|| {
-                                ChatCompletionMessageToolCall {
-                                    id: id.unwrap(),
-                                    r#type: ChatCompletionToolType::Function,
-                                    function: FunctionCall {
-                                        name: name.unwrap(),
-                                        arguments: Default::default(),
-                                    },
+                            let state = match tool_call_states.entry(index) {
+                                Entry::Occupied(state) => state.into_mut(),
+                                Entry::Vacant(vacant) => {
+                                    let Some(id) = id else {
+                                        tracing::warn!(
+                                            "Skipping tool_call chunk without id for new index {index}"
+                                        );
+                                        continue;
+                                    };
+                                    let Some(name) = name else {
+                                        tracing::warn!(
+                                            "Skipping tool_call chunk without function name for new index {index}"
+                                        );
+                                        continue;
+                                    };
+                                    vacant.insert(ChatCompletionMessageToolCall {
+                                        id,
+                                        r#type: ChatCompletionToolType::Function,
+                                        function: FunctionCall {
+                                            name,
+                                            arguments: Default::default(),
+                                        },
+                                    })
                                 }
-                            });
+                            };
                             if let Some(arguments) = arguments {
                                 state.function.arguments.push_str(&arguments);
                             }
@@ -523,21 +543,19 @@ impl<C: Config> OpenAIModel<C> {
 
         let response = async move {
             let result = self.client.chat().create(call).await;
-            let _ = result
-                .as_ref()
-                .map(|response| serde_json::to_value(response).unwrap())
-                .as_ref()
-                .map(JsonValue)
-                .record();
+            if let Ok(response) = result.as_ref() {
+                if let Ok(value) = serde_json::to_value(response) {
+                    Span::current().record("output", JsonValue(&value).as_value());
+                }
+            }
             let response = result.map_err(map_openai_api_error)?;
 
             let span = Span::current();
             span.record("output", serde_json::to_string(&response)?);
             if let Some(ref usage) = response.usage {
-                span.record(
-                    "usage",
-                    JsonValue(&serde_json::to_value(usage).unwrap()).as_value(),
-                );
+                if let Ok(value) = serde_json::to_value(usage) {
+                    span.record("usage", JsonValue(&value).as_value());
+                }
             }
             Ok::<_, GatewayError>(response)
         }
@@ -561,7 +579,7 @@ impl<C: Config> OpenAIModel<C> {
 
         match finish_reason.as_ref() {
             Some(&FinishReason::ToolCalls) => {
-                let tool_calls = first_choice.message.tool_calls.unwrap();
+                let tool_calls = first_choice.message.tool_calls.unwrap_or_default();
                 tracing::warn!("Tool calls: {tool_calls:#?}");
 
                 let content = first_choice.message.content;
@@ -576,12 +594,10 @@ impl<C: Config> OpenAIModel<C> {
                 );
                 tools_span.follows_from(span.id());
 
-                let tool_name = tool_calls[0].function.name.clone();
-                let tool = self
-                    .tools
-                    .get(tool_name.as_str())
-                    .unwrap_or_else(|| panic!("Tool {tool_name} not found checked"));
-                if tool.stop_at_call() {
+                if tool_calls.is_empty() {
+                    tracing::warn!(
+                        "finish_reason is tool_calls, but response has no tool_calls payload; returning empty tool result"
+                    );
                     let finish_reason = Self::map_finish_reason(
                         &finish_reason.expect("Finish reason is already checked"),
                     );
@@ -593,7 +609,7 @@ impl<C: Config> OpenAIModel<C> {
                             output: content.clone(),
                             usage: Self::map_usage(response.usage.as_ref()),
                             finish_reason,
-                            tool_calls: tool_calls.iter().map(Self::map_tool_call).collect(),
+                            tool_calls: vec![],
                             credentials_ident: self.credentials_ident.clone(),
                         }),
                     )))
@@ -602,27 +618,68 @@ impl<C: Config> OpenAIModel<C> {
 
                     Ok(InnerExecutionResult::Finish(ChatCompletionMessage {
                         role: "assistant".to_string(),
-                        content: content.map(ChatCompletionContent::Text),
-                        tool_calls: Some(
-                            tool_calls
-                                .iter()
-                                .enumerate()
-                                .map(|(index, tool_call)| ToolCall {
-                                    index: Some(index),
-                                    id: tool_call.id.clone(),
-                                    r#type: match tool_call.r#type {
-                                        ChatCompletionToolType::Function => "function".to_string(),
-                                    },
-                                    function: crate::types::gateway::FunctionCall {
-                                        name: tool_call.function.name.clone(),
-                                        arguments: tool_call.function.arguments.clone(),
-                                    },
-                                })
-                                .collect(),
-                        ),
+                        content: content
+                            .map(ChatCompletionContent::Text)
+                            .or(Some(ChatCompletionContent::Text(String::new()))),
+                        tool_calls: Some(vec![]),
                         ..Default::default()
                     }))
                 } else {
+                    let tool_name = tool_calls[0].function.name.clone();
+                    let should_stop_at_call = match self.tools.get(tool_name.as_str()) {
+                        Some(tool) => tool.stop_at_call(),
+                        None => {
+                            tracing::warn!(
+                                "Tool {tool_name} not found in configured tools, returning tool_calls to client without local execution"
+                            );
+                            true
+                        }
+                    };
+
+                    if should_stop_at_call {
+                        let finish_reason = Self::map_finish_reason(
+                            &finish_reason.expect("Finish reason is already checked"),
+                        );
+                        tx.send(Some(ModelEvent::new(
+                            &span,
+                            ModelEventType::LlmStop(LLMFinishEvent {
+                                provider_name: SPAN_OPENAI.to_string(),
+                                model_name: self.params.model.clone().unwrap_or_default(),
+                                output: content.clone(),
+                                usage: Self::map_usage(response.usage.as_ref()),
+                                finish_reason,
+                                tool_calls: tool_calls.iter().map(Self::map_tool_call).collect(),
+                                credentials_ident: self.credentials_ident.clone(),
+                            }),
+                        )))
+                        .await
+                        .map_err(|e| GatewayError::CustomError(e.to_string()))?;
+
+                        Ok(InnerExecutionResult::Finish(ChatCompletionMessage {
+                            role: "assistant".to_string(),
+                            content: content.map(ChatCompletionContent::Text),
+                            tool_calls: Some(
+                                tool_calls
+                                    .iter()
+                                    .enumerate()
+                                    .map(|(index, tool_call)| ToolCall {
+                                        index: Some(index),
+                                        id: tool_call.id.clone(),
+                                        r#type: match tool_call.r#type {
+                                            ChatCompletionToolType::Function => {
+                                                "function".to_string()
+                                            }
+                                        },
+                                        function: crate::types::gateway::FunctionCall {
+                                            name: tool_call.function.name.clone(),
+                                            arguments: tool_call.function.arguments.clone(),
+                                        },
+                                    })
+                                    .collect(),
+                            ),
+                            ..Default::default()
+                        }))
+                    } else {
                     let mut messages: Vec<ChatCompletionRequestMessage> =
                         vec![ChatCompletionRequestMessage::Assistant(
                             ChatCompletionRequestAssistantMessageArgs::default()
@@ -643,6 +700,7 @@ impl<C: Config> OpenAIModel<C> {
                     let conversation_messages = [input_messages, messages].concat();
 
                     Ok(InnerExecutionResult::NextCall(conversation_messages))
+                    }
                 }
             }
 
@@ -806,10 +864,9 @@ impl<C: Config> OpenAIModel<C> {
         .await
         .map_err(|e| GatewayError::CustomError(e.to_string()))?;
         if let Some(usage) = usage {
-            span.record(
-                "usage",
-                JsonValue(&serde_json::to_value(usage).unwrap()).as_value(),
-            );
+            if let Ok(value) = serde_json::to_value(usage) {
+                span.record("usage", JsonValue(&value).as_value());
+            }
         }
         let response = serde_json::json!({
             "finish_reason": trace_finish_reason,
@@ -823,10 +880,24 @@ impl<C: Config> OpenAIModel<C> {
                 }))
             }
             FinishReason::ToolCalls => {
-                let tool = self
-                    .tools
-                    .get(tool_calls[0].function.name.as_str())
-                    .unwrap();
+                if tool_calls.is_empty() {
+                    tracing::warn!(
+                        "finish_reason is tool_calls, but stream produced no tool_calls payload; finishing without local tool execution"
+                    );
+                    return Ok(InnerExecutionResult::Finish(ChatCompletionMessage {
+                        ..Default::default()
+                    }));
+                }
+                let tool_name = tool_calls[0].function.name.clone();
+                let should_stop_at_call = match self.tools.get(tool_name.as_str()) {
+                    Some(tool) => tool.stop_at_call(),
+                    None => {
+                        tracing::warn!(
+                            "Tool {tool_name} not found in configured tools, finishing stream without local tool execution"
+                        );
+                        true
+                    }
+                };
 
                 let label = map_tool_names_to_labels(&tool_calls);
                 let tools_span = tracing::info_span!(
@@ -839,7 +910,7 @@ impl<C: Config> OpenAIModel<C> {
                 );
                 tools_span.follows_from(span.id());
 
-                if tool.stop_at_call() {
+                if should_stop_at_call {
                     Ok(InnerExecutionResult::Finish(ChatCompletionMessage {
                         ..Default::default()
                     }))
