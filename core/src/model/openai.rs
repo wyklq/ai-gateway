@@ -646,7 +646,7 @@ impl<C: Config> OpenAIModel<C> {
                 }
             }
 
-            Some(&FinishReason::Stop) => {
+            Some(&FinishReason::Stop) | Some(&FinishReason::Length) => {
                 let finish_reason = Self::map_finish_reason(
                     &finish_reason.expect("Finish reason is already checked"),
                 );
@@ -817,9 +817,11 @@ impl<C: Config> OpenAIModel<C> {
         });
         span.record("output", response.to_string());
         match finish_reason {
-            FinishReason::Stop => Ok(InnerExecutionResult::Finish(ChatCompletionMessage {
+            FinishReason::Stop | FinishReason::Length => {
+                Ok(InnerExecutionResult::Finish(ChatCompletionMessage {
                 ..Default::default()
-            })),
+                }))
+            }
             FinishReason::ToolCalls => {
                 let tool = self
                     .tools

@@ -82,7 +82,7 @@ pub async fn execute(
         response_sender.send(response.clone()).unwrap();
     }
 
-    let finish_reason = match (&response.tool_calls, &response.content) {
+    let fallback_finish_reason = match (&response.tool_calls, &response.content) {
         (Some(_), _) => {
             let calls = serde_json::to_string(&response.tool_calls).unwrap();
             span.record("response", &calls);
@@ -107,6 +107,11 @@ pub async fn execute(
             Err(_) => (None, None),
         }
     };
+
+    let finish_reason = u
+        .as_ref()
+        .map(|event| event.finish_reason.to_string())
+        .unwrap_or(fallback_finish_reason);
 
     let model_usage = u.and_then(|u| u.usage);
     let is_cache_used = model_usage.as_ref().map(|u| u.is_cache_used);
@@ -187,7 +192,7 @@ pub async fn execute_with_tags(
         response_sender.send(response.clone()).unwrap();
     }
     
-    let finish_reason = match (&response.tool_calls, &response.content) {
+    let fallback_finish_reason = match (&response.tool_calls, &response.content) {
         (Some(_), _) => {
             let calls = serde_json::to_string(&response.tool_calls).unwrap();
             span.record("response", &calls);
@@ -212,6 +217,11 @@ pub async fn execute_with_tags(
             Err(_) => (None, None),
         }
     };
+
+    let finish_reason = u
+        .as_ref()
+        .map(|event| event.finish_reason.to_string())
+        .unwrap_or(fallback_finish_reason);
     
     let model_usage = u.and_then(|u| u.usage);
     let is_cache_used = model_usage.as_ref().map(|u| u.is_cache_used);
