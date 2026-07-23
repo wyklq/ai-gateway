@@ -419,6 +419,8 @@ pub struct FunctionParameters {
     pub r#type: String,
     pub properties: HashMap<String, Property>,
     pub required: Option<Vec<String>>,
+    #[serde(flatten)]
+    pub schema_extensions: HashMap<String, Value>,
 }
 
 impl Default for FunctionParameters {
@@ -427,17 +429,21 @@ impl Default for FunctionParameters {
             r#type: "object".to_owned(),
             properties: Default::default(),
             required: Some(vec![]),
+            schema_extensions: Default::default(),
         }
     }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Property {
-    pub r#type: PropertyType,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub r#type: Option<PropertyType>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub items: Option<Box<Property>>,
+    #[serde(flatten)]
+    pub schema_extensions: HashMap<String, Value>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -830,5 +836,48 @@ mod tests {
 
         let v = serde_json::to_string(&v).unwrap();
         println!("{v}");
+    }
+
+    #[test]
+    fn deserialize_copilot_tool_schema_with_any_of() {
+        let json = r#"
+            {
+                "model": "qwen3vl",
+                "messages": [],
+                "tools": [
+                    {
+                        "type": "function",
+                        "function": {
+                            "name": "edit_notebook_file",
+                            "description": "Edit a notebook cell.",
+                            "parameters": {
+                                "type": "object",
+                                "properties": {
+                                    "newCode": {
+                                        "anyOf": [
+                                            { "type": "string" },
+                                            {
+                                                "type": "array",
+                                                "items": { "type": "string" }
+                                            }
+                                        ]
+                                    }
+                                },
+                                "required": ["newCode"]
+                            }
+                        }
+                    }
+                ]
+            }
+        "#;
+
+        let request: ChatCompletionRequest = serde_json::from_str(json).unwrap();
+        let serialized = serde_json::to_value(request).unwrap();
+
+        assert_eq!(
+            serialized["tools"][0]["function"]["parameters"]["properties"]["newCode"]["anyOf"][0]
+                ["type"],
+            "string"
+        );
     }
 }
